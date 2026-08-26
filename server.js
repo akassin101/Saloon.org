@@ -28,7 +28,18 @@ const bcrypt    = require('bcryptjs');
 const fs        = require('fs');
 const path      = require('path');
 
-const app    = express();
+const helmet    = require('helmet');
+const rateLimit = require('express-rate-limit');
+
+const app = express();
+
+app.use(helmet());
+app.use(rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false
+}));
 const PORT   = process.env.PORT || 3000;
 const SECRET = process.env.JWT_SECRET || 'saloon-dev-secret-change-in-production';
 const DATA   = path.join(__dirname, 'data.json');
