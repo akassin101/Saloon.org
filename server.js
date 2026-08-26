@@ -44,7 +44,7 @@ app.use(rateLimit({
 }));
 const PORT        = process.env.PORT || 3000;
 const SECRET      = process.env.JWT_SECRET || 'saloon-dev-secret-change-in-production';
-const DATA        = path.join(__dirname, 'data.json');
+const DATA        = process.env.DATA_PATH || path.join(__dirname, 'data.json');
 const ORIGIN      = process.env.FRONTEND_ORIGIN || '*';
 const SITE_URL    = process.env.SITE_URL || 'https://saloon.org';
 const FROM_EMAIL  = process.env.FROM_EMAIL || 'noreply@saloon.org';
