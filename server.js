@@ -153,26 +153,87 @@ function pub(u) {
 
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
 
+// ─── GOOGLE AUTH ──────────────────────────────────────────────────────────────
+
+async function verifyGoogleToken(credential) {
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'oauth2.googleapis.com',
+      path: `/tokeninfo?id_token=${encodeURIComponent(credential)}`,
+      method: 'GET',
+    }, res => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try {
+          const payload = JSON.parse(data);
+          if (payload.error_description) return reject(new Error(payload.error_description));
+          resolve(payload);
+        } catch(e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+app.post('/api/auth/google', async (req, res) => {
+  const { credential } = req.body;
+  if (!credential) return res.status(400).json({ error: 'Missing Google credential.' });
+  let payload;
+  try { payload = await verifyGoogleToken(credential); }
+  catch(e) { return res.status(401).json({ error: 'Invalid Google token.' }); }
+
+  const email = (payload.email || '').toLowerCase().trim();
+  if (!email) return res.status(400).json({ error: 'No email from Google.' });
+
+  const existing = db.users.find(u => u.email === email);
+  if (existing) {
+    // Existing user — log them in
+    existing.googleId = payload.sub;
+    saveDB();
+    const token = jwt.sign({ id: existing.id }, SECRET, { expiresIn: '30d' });
+    return res.json({ user: pub(existing), token });
+  }
+
+  // New user — tell frontend to show registration form
+  res.json({ needsRegistration: true, email });
+});
+
 app.post('/api/auth/register', async (req, res) => {
-  const { firstName, lastName, email, password, idFileName } = req.body;
-  if (!firstName || !lastName || !email || !password)
+  const { firstName, lastName, email, password, googleCredential, idFileName } = req.body;
+  if (!firstName || !lastName || !email)
     return res.status(400).json({ error: 'All fields are required.' });
   if (!email.includes('@'))
     return res.status(400).json({ error: 'Please enter a valid email address.' });
-  if (password.length < 6)
-    return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+
+  let passwordHash = null;
+  let googleId = null;
+
+  if (googleCredential) {
+    let payload;
+    try { payload = await verifyGoogleToken(googleCredential); }
+    catch(e) { return res.status(401).json({ error: 'Invalid Google token.' }); }
+    if ((payload.email || '').toLowerCase().trim() !== email.toLowerCase().trim())
+      return res.status(400).json({ error: 'Email does not match Google account.' });
+    googleId = payload.sub;
+  } else {
+    if (!password || password.length < 6)
+      return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+    passwordHash = await bcrypt.hash(password, 10);
+  }
+
   if (db.users.find(u => u.email === email.toLowerCase().trim()))
     return res.status(400).json({ error: 'An account with that email already exists.' });
-
-  const passwordHash = await bcrypt.hash(password, 10);
-  const emailVerifyToken = crypto.randomBytes(32).toString('hex');
+  const emailVerifyToken = googleId ? null : crypto.randomBytes(32).toString('hex');
   const user = {
     id: uid(),
     firstName: firstName.trim(),
     lastName: lastName.trim(),
     email: email.toLowerCase().trim(),
     passwordHash,
-    emailVerified: false,
+    googleId: googleId || null,
+    emailVerified: !!googleId,
     emailVerifyToken,
     idFileName: idFileName || '',
     idSubmitted: !!idFileName,
@@ -192,22 +253,26 @@ app.post('/api/auth/register', async (req, res) => {
   db.users.push(user);
   saveDB();
 
-  const verifyUrl = `${SITE_URL}?verify=${emailVerifyToken}`;
-  await sendMail(user.email, 'Verify your Saloon email', `
-    <p>Hi ${user.firstName},</p>
-    <p>Click the link below to verify your email address and activate your Saloon account:</p>
-    <p><a href="${verifyUrl}">${verifyUrl}</a></p>
-    <p>This link expires in 24 hours.</p>
-  `).catch(e => console.error('[email] send failed:', e.message));
+  if (!googleId) {
+    const verifyUrl = `${SITE_URL}?verify=${emailVerifyToken}`;
+    await sendMail(user.email, 'Verify your Saloon email', `
+      <p>Hi ${user.firstName},</p>
+      <p>Click the link below to verify your email address and activate your Saloon account:</p>
+      <p><a href="${verifyUrl}">${verifyUrl}</a></p>
+      <p>This link expires in 24 hours.</p>
+    `).catch(e => console.error('[email] send failed:', e.message));
+  }
 
   const token = jwt.sign({ id: user.id }, SECRET, { expiresIn: '30d' });
-  res.json({ user: pub(user), token, emailVerificationRequired: true });
+  res.json({ user: pub(user), token, emailVerificationRequired: !googleId });
 });
 
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
   const user = db.users.find(u => u.email === email?.toLowerCase()?.trim());
   if (!user) return res.status(400).json({ error: 'No account found with that email.' });
+  if (!user.passwordHash)
+    return res.status(400).json({ error: 'This account uses Google Sign-In. Please use the "Continue with Google" button.' });
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) return res.status(400).json({ error: 'Incorrect password.' });
   if (!user.emailVerified)

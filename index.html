@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Saloon</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root {
     --bg: #f5f0e6;
@@ -299,6 +300,24 @@
   }
   .form-actions { margin-top: 24px; }
   .form-actions .btn-primary { padding: 10px 20px; font-size: 15px; width: 100%; }
+  .btn-google {
+    width: 100%; padding: .7rem 1rem;
+    background: #fff; border: 1px solid var(--border);
+    border-radius: var(--radius); font-size: 15px;
+    font-family: var(--font-ui); font-weight: 500;
+    color: var(--text); display: flex; align-items: center;
+    justify-content: center; gap: 10px; cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .btn-google:hover { background: #f5f5f5; border-color: #aaa; }
+  .auth-divider {
+    display: flex; align-items: center; gap: 12px;
+    margin: 16px 0; font-family: var(--font-ui);
+    font-size: 13px; color: var(--muted);
+  }
+  .auth-divider::before, .auth-divider::after {
+    content: ''; flex: 1; height: 1px; background: var(--border);
+  }
   .auth-switch {
     text-align: center;
     font-size: 14px;
@@ -1436,6 +1455,11 @@ function renderLogin() {
         <div class="form-actions">
           <button class="btn-primary" onclick="doLogin()">Sign in</button>
         </div>
+        <div class="auth-divider">or</div>
+        <button class="btn-google" onclick="startGoogleAuth()">
+          <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.707A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.707V4.961H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.961L3.964 6.293C4.672 4.166 6.656 3.58 9 3.58z"/></svg>
+          Continue with Google
+        </button>
         <div class="auth-switch">
           Don't have an account? <a href="#" onclick="navigate('register');return false">Join Saloon</a>
         </div>
@@ -1443,6 +1467,74 @@ function renderLogin() {
     </div>
   `;
   document.getElementById('login-password').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+}
+
+const GOOGLE_CLIENT_ID = '233389892795-7nklhha46ahv3odsn0uk0lu69qcogakb.apps.googleusercontent.com';
+
+function startGoogleAuth() {
+  if (typeof google === 'undefined') { toast('Google Sign-In not loaded yet. Please try again.'); return; }
+  google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: 'openid email profile',
+    callback: () => {}
+  });
+  // Use the ID token flow via prompt
+  google.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    callback: handleGoogleCredential,
+    auto_select: false,
+    cancel_on_tap_outside: true,
+  });
+  google.accounts.id.prompt(notification => {
+    if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+      // Fallback: render a button in an overlay
+      showGooglePopup();
+    }
+  });
+}
+
+function showGooglePopup() {
+  const overlay = document.createElement('div');
+  overlay.id = 'google-popup-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center';
+  overlay.innerHTML = '<div style="background:#fff;border-radius:12px;padding:32px;text-align:center;min-width:280px"><p style="font-family:sans-serif;margin-bottom:16px;color:#333">Sign in with your Google account</p><div id="google-btn-container"></div><br><button onclick="document.getElementById(\'google-popup-overlay\').remove()" style="font-family:sans-serif;font-size:13px;color:#888;background:none;border:none;cursor:pointer">Cancel</button></div>';
+  document.body.appendChild(overlay);
+  google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleGoogleCredential });
+  google.accounts.id.renderButton(document.getElementById('google-btn-container'), { theme: 'outline', size: 'large', width: 240 });
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+}
+
+async function handleGoogleCredential(response) {
+  const overlay = document.getElementById('google-popup-overlay');
+  if (overlay) overlay.remove();
+  try {
+    const res = await apiCall('POST', '/api/auth/google', { credential: response.credential });
+    if (res.needsRegistration) {
+      // New Google user — show registration form pre-filled
+      pendingGoogleCredential = response.credential;
+      pendingGoogleEmail = res.email;
+      navigate('register');
+      // Pre-fill email after render
+      setTimeout(() => {
+        const emailEl = document.getElementById('reg-email');
+        if (emailEl) { emailEl.value = res.email; emailEl.readOnly = true; }
+      }, 50);
+      toast('Welcome! Please complete your registration and upload your ID.');
+    } else {
+      // Existing verified Google user
+      currentUser = res.user;
+      localStorage.setItem('saloon_session', res.user.id);
+      localStorage.setItem('saloon_jwt', res.token);
+      const idx = DB.users.findIndex(u => u.id === res.user.id);
+      if (idx >= 0) DB.users[idx] = res.user; else DB.users.push(res.user);
+      DB.save();
+      renderNav();
+      navigate('home');
+      toast('Welcome back, ' + displayName(currentUser) + '!');
+    }
+  } catch(e) {
+    toast('Google sign-in failed: ' + e.message);
+  }
 }
 
 async function doLogin() {
@@ -1557,6 +1649,8 @@ async function doResetPassword(token) {
 
 let pendingIdFile = null;
 let pendingIdFileName = null;
+let pendingGoogleCredential = null;
+let pendingGoogleEmail = null;
 
 function renderRegister() {
   document.getElementById('page-register').innerHTML = `
@@ -1564,6 +1658,11 @@ function renderRegister() {
       <div class="auth-card" style="max-width:480px">
         <h2>Join Saloon</h2>
         <p class="auth-sub">Your real name is required — Saloon is a space for accountable conversation</p>
+        <button class="btn-google" onclick="startGoogleAuth()" style="margin-bottom:4px">
+          <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.707A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.707V4.961H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.961L3.964 6.293C4.672 4.166 6.656 3.58 9 3.58z"/></svg>
+          Sign up with Google
+        </button>
+        <div class="auth-divider">or sign up with email</div>
         <div class="form-row">
           <div class="form-group">
             <label>First name</label>
@@ -1631,32 +1730,49 @@ async function doRegister() {
     if (!firstName) { errEl.textContent = 'Please enter your first name.'; errEl.style.display = ''; return; }
     if (!lastName)  { errEl.textContent = 'Please enter your last name.';  errEl.style.display = ''; return; }
     if (!email || !email.includes('@')) { errEl.textContent = 'Please enter a valid email.'; errEl.style.display = ''; return; }
-    if (password.length < 6) { errEl.textContent = 'Password must be at least 6 characters.'; errEl.style.display = ''; return; }
-    if (password !== password2) { errEl.textContent = 'Passwords do not match.'; errEl.style.display = ''; return; }
+    if (!pendingGoogleCredential) {
+      if (password.length < 6) { errEl.textContent = 'Password must be at least 6 characters.'; errEl.style.display = ''; return; }
+      if (password !== password2) { errEl.textContent = 'Passwords do not match.'; errEl.style.display = ''; return; }
+    }
     if (!pendingIdFile) { errEl.textContent = 'Please upload a valid photo ID.'; errEl.style.display = ''; return; }
     if (btn) btn.disabled = true;
     try {
       const res = await apiCall('POST', '/api/auth/register', {
-        firstName, lastName, email, password,
+        firstName, lastName, email,
+        ...(pendingGoogleCredential ? { googleCredential: pendingGoogleCredential } : { password }),
         idFileName: pendingIdFileName || ''
       });
       // Store ID image locally in IDSTORE (never sent to server in full)
       IDSTORE.set(res.user.id, pendingIdFile);
       pendingIdFile = null;
+      pendingGoogleCredential = null;
+      pendingGoogleEmail = null;
       const idx = DB.users.findIndex(u => u.id === res.user.id);
       if (idx >= 0) DB.users[idx] = res.user; else DB.users.push(res.user);
       DB.save();
-      // Don't log them in yet — show email verification notice
-      document.getElementById('page-register').innerHTML = `
-        <div class="container">
-          <div class="auth-card" style="max-width:480px;text-align:center">
-            <div style="font-size:48px;margin-bottom:16px">📬</div>
-            <h2>Check your email</h2>
-            <p class="auth-sub" style="margin-bottom:16px">We sent a verification link to <strong>${esc(res.user.email)}</strong>. Click it to activate your account.</p>
-            <p style="font-size:13px;color:var(--muted);font-family:var(--font-ui)">Didn't get it? <a href="#" onclick="resendVerificationTo('${esc(res.user.email)}');return false">Resend email</a></p>
+      // Show appropriate post-registration screen
+      if (res.emailVerificationRequired) {
+        document.getElementById('page-register').innerHTML = `
+          <div class="container">
+            <div class="auth-card" style="max-width:480px;text-align:center">
+              <div style="font-size:48px;margin-bottom:16px">📬</div>
+              <h2>Check your email</h2>
+              <p class="auth-sub" style="margin-bottom:16px">We sent a verification link to <strong>${esc(res.user.email)}</strong>. Click it to activate your account.</p>
+              <p style="font-size:13px;color:var(--muted);font-family:var(--font-ui)">Didn't get it? <a href="#" onclick="resendVerificationTo('${esc(res.user.email)}');return false">Resend email</a></p>
+            </div>
           </div>
-        </div>
-      `;
+        `;
+      } else {
+        document.getElementById('page-register').innerHTML = `
+          <div class="container">
+            <div class="auth-card" style="max-width:480px;text-align:center">
+              <div style="font-size:48px;margin-bottom:16px">🪪</div>
+              <h2>ID submitted</h2>
+              <p class="auth-sub" style="margin-bottom:16px">Your ID is pending review by an admin. You'll be able to participate once approved.</p>
+            </div>
+          </div>
+        `;
+      }
     } catch(e) {
       errEl.textContent = e.message; errEl.style.display = '';
     }
