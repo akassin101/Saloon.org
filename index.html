@@ -390,6 +390,13 @@
 
   /* POSTS */
   .posts { display: flex; flex-direction: column; gap: 0; }
+  .posts-card {
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0 28px;
+    margin-top: 20px;
+  }
   .post { padding: 28px 0; border-bottom: 1px solid var(--border); position: relative; }
   .post-author {
     font-family: var(--font-ui);
@@ -1877,6 +1884,7 @@ function renderConversation(id) {
         ${currentUser ? `<button class="btn-ghost btn-sm" style="margin-left:auto" onclick="openAnnotateModal(null,'${id}',null)">◎ Comment on conversation</button>` : ''}
       </div>
 
+      <div class="posts-card">
       <div class="posts" id="posts-container">
         ${posts.length === 0
           ? `<div class="empty-state" style="padding:40px 0"><div class="empty-icon">✦</div><h3>No posts yet</h3><p>${isParticipant ? 'Be the first to write.' : ''}</p></div>`
@@ -1885,7 +1893,7 @@ function renderConversation(id) {
       </div>
 
       ${isParticipant ? `
-        <div class="compose-area" style="margin-top:28px">
+        <div class="compose-area" style="margin-top:0;border-top:1px solid var(--border);padding-top:24px;margin-bottom:24px">
           <h4>Add to the conversation</h4>
           <textarea id="post-compose" placeholder="Write your thoughts…"></textarea>
           <div class="submit-row">
@@ -1902,6 +1910,7 @@ function renderConversation(id) {
           You're not a participant — you may still comment on the conversation below.
         </div>
       `)}
+      </div><!-- end posts-card -->
 
       <div class="conv-comments-section">
         <h3>Comments on this conversation</h3>
