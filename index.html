@@ -1,0 +1,2719 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Saloon</title>
+<style>
+  :root {
+    --bg: #f5f0e6;
+    --surface: #fffdf6;
+    --border: #d9cebc;
+    --text: #1c1810;
+    --muted: #7a6e5c;
+    --accent: #8b2315;
+    --accent-light: #fce9e6;
+    --accent2: #1a3557;
+    --danger: #8b2315;
+    --like: #2d6a2d;
+    --dislike: #8b2315;
+    --highlight: #fef3c7;
+    --highlight-border: #c9952a;
+    --gold: #c9952a;
+    --radius: 4px;
+    --font-body: Georgia, 'Times New Roman', serif;
+    --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 17px;
+    line-height: 1.7;
+    min-height: 100vh;
+  }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  button {
+    font-family: var(--font-ui);
+    cursor: pointer;
+    border: none;
+    border-radius: var(--radius);
+    transition: opacity 0.15s, background 0.15s;
+  }
+  button:hover { opacity: 0.85; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  input, textarea, select {
+    font-family: var(--font-body);
+    font-size: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 12px;
+    width: 100%;
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 100px; line-height: 1.7; }
+
+  /* NAV */
+  nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--bg);
+    border-bottom: 3px solid var(--accent);
+    box-shadow: inset 0 -5px 0 0 var(--accent2), inset 0 -6px 0 0 var(--accent2);
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 56px;
+  }
+  .nav-brand {
+    font-family: var(--font-ui);
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    color: var(--text);
+    text-decoration: none;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .nav-brand .brand-name { color: var(--accent); }
+  .mugs-svg { flex-shrink: 0; margin-right: 4px; }
+  .brand-name-wrap { display: inline-flex; align-items: baseline; }
+  .brand-n-wrap {
+    position: relative;
+    display: inline-block;
+  }
+  .cowboy-hat-svg {
+    position: absolute;
+    bottom: 0.58em;
+    top: auto;
+    left: -20px;
+    transform: rotate(-8deg);
+    transform-origin: center bottom;
+    pointer-events: none;
+    transition: transform 0.28s cubic-bezier(0.34,1.56,0.64,1);
+  }
+  .nav-brand:hover .cowboy-hat-svg {
+    transform: rotate(-8deg) translateY(-10px);
+  }
+  /* mug clink: each group animates toward center then back */
+  @keyframes clink-l {
+    0%   { transform: rotate(14deg); }
+    28%  { transform: rotate(30deg) translateX(3px); }
+    50%  { transform: rotate(12deg); }
+    70%  { transform: rotate(16deg); }
+    100% { transform: rotate(14deg); }
+  }
+  @keyframes clink-r {
+    0%   { transform: rotate(-14deg); }
+    28%  { transform: rotate(-30deg) translateX(-3px); }
+    50%  { transform: rotate(-12deg); }
+    70%  { transform: rotate(-16deg); }
+    100% { transform: rotate(-14deg); }
+  }
+  .nav-brand:hover #mug-l { animation: clink-l 0.5s ease forwards; }
+  .nav-brand:hover #mug-r { animation: clink-r 0.5s ease forwards; }
+  /* foam fades on hover */
+  #foam-l, #foam-r { transition: opacity 0.25s 0.1s; }
+  .nav-brand:hover #foam-l,
+  .nav-brand:hover #foam-r { opacity: 0; }
+  .nav-tagline {
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--muted);
+    letter-spacing: 0.01em;
+    font-style: italic;
+  }
+  .nav-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-family: var(--font-ui);
+    font-size: 14px;
+  }
+  .nav-user { color: var(--muted); font-size: 13px; }
+  .btn-ghost {
+    background: none;
+    color: var(--accent);
+    font-size: 14px;
+    padding: 6px 12px;
+    border: 1px solid var(--accent);
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: white;
+    font-size: 14px;
+    padding: 6px 14px;
+  }
+  .btn-sm { font-size: 13px; padding: 4px 10px; }
+  .btn-danger { background: var(--danger); color: white; font-size: 13px; padding: 5px 10px; }
+
+  /* LAYOUT */
+  .container { max-width: 740px; margin: 0 auto; padding: 40px 24px; }
+  .container-wide { max-width: 900px; margin: 0 auto; padding: 40px 24px; }
+
+  /* PAGE TITLE */
+  .page-header { margin-bottom: 32px; }
+  .page-header h1 {
+    font-size: 28px;
+    font-weight: normal;
+    letter-spacing: -0.02em;
+    margin-bottom: 6px;
+  }
+  .page-header p {
+    color: var(--muted);
+    font-size: 15px;
+    font-family: var(--font-ui);
+  }
+
+  /* CATEGORY PILLS */
+  .category-filter {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 20px;
+  }
+  .cat-pill {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    padding: 4px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--muted);
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .cat-pill:hover { border-color: var(--accent); color: var(--accent); opacity: 1; }
+  .cat-pill.active { background: var(--accent); border-color: var(--accent); color: white; }
+  .cat-badge {
+    display: inline-block;
+    font-family: var(--font-ui);
+    font-size: 11px;
+    background: var(--accent-light);
+    color: var(--accent);
+    border-radius: 20px;
+    padding: 1px 8px;
+    vertical-align: middle;
+    font-weight: 500;
+  }
+
+  /* FEED */
+  .feed { display: flex; flex-direction: column; gap: 1px; }
+  .feed-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .feed-item:hover { border-color: var(--gold); }
+  .feed-item-title { font-size: 19px; font-weight: normal; margin-bottom: 8px; color: var(--text); }
+  .feed-item-meta {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: var(--muted);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+  }
+  .feed-item-meta .meta-stat { display: flex; align-items: center; gap: 4px; }
+  .feed-item-snippet {
+    margin: 10px 0 0;
+    font-size: 15px;
+    color: var(--muted);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .feed-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 20px;
+    font-family: var(--font-ui);
+    font-size: 14px;
+  }
+  .feed-tab {
+    padding: 10px 18px;
+    cursor: pointer;
+    color: var(--muted);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .feed-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* AUTH PAGES */
+  .auth-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 36px 40px;
+    max-width: 440px;
+    margin: 60px auto 0;
+  }
+  .auth-card h2 { font-size: 22px; font-weight: normal; margin-bottom: 8px; }
+  .auth-card .auth-sub {
+    font-size: 14px;
+    color: var(--muted);
+    font-family: var(--font-ui);
+    margin-bottom: 28px;
+  }
+  .form-group { margin-bottom: 18px; }
+  .form-group label {
+    display: block;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .form-row { display: flex; gap: 12px; }
+  .form-row .form-group { flex: 1; }
+  .form-note {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 4px;
+    line-height: 1.5;
+  }
+  .form-actions { margin-top: 24px; }
+  .form-actions .btn-primary { padding: 10px 20px; font-size: 15px; width: 100%; }
+  .auth-switch {
+    text-align: center;
+    font-size: 14px;
+    color: var(--muted);
+    font-family: var(--font-ui);
+    margin-top: 18px;
+  }
+  .id-upload-area {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 22px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s;
+    font-family: var(--font-ui);
+    font-size: 14px;
+    color: var(--muted);
+  }
+  .id-upload-area:hover, .id-upload-area.has-file { border-color: var(--accent); color: var(--accent); }
+  .id-upload-area input[type="file"] { display: none; }
+
+  /* CONVERSATION PAGE */
+  .conv-header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 24px;
+    margin-bottom: 32px;
+  }
+  .conv-title-wrap { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
+  .conv-title { font-size: 30px; font-weight: normal; letter-spacing: -0.02em; flex: 1; }
+  .conv-title-input {
+    font-size: 28px;
+    font-family: var(--font-body);
+    flex: 1;
+    border: 1px dashed var(--accent);
+    padding: 2px 6px;
+  }
+  .conv-meta {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: var(--muted);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+  }
+  .stat-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 3px 10px;
+    font-size: 13px;
+    font-family: var(--font-ui);
+  }
+  .stat-pill.clickable { cursor: pointer; transition: background 0.15s; }
+  .stat-pill.clickable:hover { background: var(--accent-light); border-color: var(--accent); }
+  .stat-pill.active-like { background: #d4edda; border-color: var(--like); color: var(--like); }
+  .stat-pill.active-dislike { background: #f8d7da; border-color: var(--dislike); color: var(--dislike); }
+  .participants-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .participant-chip {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    background: var(--accent-light);
+    color: var(--accent);
+    border-radius: 20px;
+    padding: 2px 10px;
+  }
+
+  /* POSTS */
+  .posts { display: flex; flex-direction: column; gap: 0; }
+  .post { padding: 28px 0; border-bottom: 1px solid var(--border); position: relative; }
+  .post-author {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .post-author-name { color: var(--accent); font-weight: 500; }
+  .post-content { white-space: pre-wrap; line-height: 1.8; font-size: 17px; }
+  .post-content .annotated {
+    background: var(--highlight);
+    border-bottom: 2px solid var(--highlight-border);
+    cursor: pointer;
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+  .post-content .annotated:hover { background: #fde68a; }
+  .post-actions { margin-top: 14px; display: flex; gap: 10px; font-family: var(--font-ui); font-size: 13px; }
+  .post-action-btn {
+    background: none;
+    color: var(--muted);
+    font-size: 13px;
+    padding: 3px 8px;
+    border: 1px solid transparent;
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--font-ui);
+  }
+  .post-action-btn:hover { border-color: var(--border); color: var(--text); opacity: 1; }
+
+  /* ANNOTATIONS */
+  .annotation-bubble {
+    background: var(--surface);
+    border: 1px solid var(--highlight-border);
+    border-left: 3px solid var(--highlight-border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    margin: 8px 0 0 16px;
+    font-size: 15px;
+  }
+  .annotation-bubble .quoted-text {
+    font-style: italic;
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 6px;
+    font-family: var(--font-ui);
+  }
+  .annotation-bubble .ann-meta { font-family: var(--font-ui); font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+  .conv-comments-section { margin-top: 40px; padding-top: 32px; border-top: 1px solid var(--border); }
+  .conv-comments-section h3 {
+    font-size: 14px;
+    font-weight: 500;
+    font-family: var(--font-ui);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 20px;
+  }
+  .comment-item { padding: 14px 0; border-bottom: 1px solid var(--border); }
+  .comment-item:last-child { border-bottom: none; }
+  .comment-meta { font-family: var(--font-ui); font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .comment-meta .comment-author { color: var(--accent); }
+  .comment-quoted {
+    background: var(--highlight);
+    border-left: 3px solid var(--highlight-border);
+    padding: 4px 10px;
+    font-style: italic;
+    font-size: 14px;
+    color: var(--muted);
+    margin-bottom: 6px;
+    border-radius: 2px;
+  }
+  .comment-content { font-size: 16px; }
+
+  /* COMPOSE */
+  .compose-area {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-top: 32px;
+  }
+  .compose-area h4 {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+  .compose-area .submit-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 12px;
+    gap: 8px;
+    align-items: center;
+  }
+  .compose-hint { font-family: var(--font-ui); font-size: 12px; color: var(--muted); flex: 1; }
+
+  /* FLOATING ANNOTATION TRIGGER */
+  #annotation-trigger {
+    display: none;
+    position: fixed;
+    z-index: 200;
+    background: var(--accent);
+    color: white;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    padding: 5px 12px;
+    border-radius: 20px;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    white-space: nowrap;
+  }
+  #annotation-trigger:hover { opacity: 0.9; }
+
+  /* PARTICIPANTS PANEL */
+  .participants-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    margin-top: 24px;
+  }
+  .participants-panel h4 {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+  .add-participant-row { display: flex; gap: 8px; margin-top: 12px; }
+  .add-participant-row input { flex: 1; }
+
+  /* MODAL */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.35);
+    z-index: 300;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px 36px;
+    max-width: 520px;
+    width: 100%;
+    margin: 24px;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+  .modal-box h2 { font-size: 22px; font-weight: normal; margin-bottom: 20px; }
+  .modal-close {
+    position: absolute;
+    top: 16px; right: 20px;
+    background: none;
+    font-size: 22px;
+    color: var(--muted);
+    line-height: 1;
+  }
+
+  .comment-context-box {
+    background: var(--highlight);
+    border: 1px solid var(--highlight-border);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    font-style: italic;
+    font-size: 14px;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+
+  /* TOAST */
+  #toast {
+    position: fixed;
+    bottom: 24px; left: 50%;
+    transform: translateX(-50%);
+    background: var(--text);
+    color: white;
+    font-family: var(--font-ui);
+    font-size: 14px;
+    padding: 10px 20px;
+    border-radius: 20px;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+    z-index: 999;
+  }
+  #toast.show { opacity: 1; }
+
+  /* EMPTY STATES */
+  .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); font-family: var(--font-ui); }
+  .empty-state .empty-icon { font-size: 36px; margin-bottom: 12px; }
+  .empty-state h3 { font-size: 18px; font-weight: 500; margin-bottom: 6px; }
+  .empty-state p { font-size: 14px; }
+
+  /* BADGES */
+  .badge {
+    display: inline-block;
+    font-family: var(--font-ui);
+    font-size: 11px;
+    background: var(--accent-light);
+    color: var(--accent);
+    border-radius: 20px;
+    padding: 1px 7px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .badge.pending { background: #fef9c3; color: #b45309; }
+
+  /* RESPONSIVE */
+  @media (max-width: 600px) {
+    nav { padding: 0 16px; }
+    .nav-tagline { display: none; }
+    .container, .container-wide { padding: 24px 16px; }
+    .auth-card { padding: 24px 20px; margin-top: 20px; }
+    .modal-box { padding: 24px 20px; }
+    .form-row { flex-direction: column; gap: 0; }
+  }
+
+  /* COMMENT VIEW TOGGLE */
+  .comment-view-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 20px;
+  }
+  .comment-view-toggle span { margin-right: 4px; }
+  .cvt-btn {
+    background: none;
+    color: var(--muted);
+    font-size: 12px;
+    font-family: var(--font-ui);
+    padding: 3px 10px;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+  }
+  .cvt-btn.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+  }
+  .cvt-btn:hover:not(.active) { border-color: var(--accent); color: var(--accent); opacity: 1; }
+
+  /* SIDEBAR LAYOUT */
+  .post-split {
+    display: grid;
+    grid-template-columns: 1fr 300px;
+    gap: 32px;
+    align-items: start;
+  }
+  .post-split .post-main { min-width: 0; }
+  .post-split .post-sidebar {
+    border-left: 1px solid var(--border);
+    padding-left: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .post-sidebar-empty {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: var(--border);
+    font-style: italic;
+  }
+
+  @media (max-width: 720px) {
+    .post-split { grid-template-columns: 1fr; }
+    .post-split .post-sidebar { border-left: none; border-top: 1px solid var(--border); padding-left: 0; padding-top: 16px; }
+  }
+
+  /* PROFILE PAGE */
+  .profile-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 28px;
+    padding-bottom: 28px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 32px;
+  }
+  .profile-avatar {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    background: #fef3c7;
+    color: var(--gold);
+    font-family: var(--font-ui);
+    font-size: 26px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    border: 2px solid var(--border);
+  }
+  .profile-info { flex: 1; min-width: 0; }
+  .profile-name {
+    font-size: 26px;
+    font-weight: normal;
+    letter-spacing: -0.02em;
+    margin-bottom: 4px;
+  }
+  .profile-bio {
+    font-size: 16px;
+    color: var(--muted);
+    margin-bottom: 12px;
+    line-height: 1.6;
+  }
+  .profile-stats {
+    display: flex;
+    gap: 20px;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .profile-stat strong { color: var(--text); }
+  .profile-credentials {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+  }
+  .credential-chip {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 3px 10px;
+    color: var(--muted);
+  }
+  .profile-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 28px;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    overflow-x: auto;
+  }
+  .profile-tab {
+    padding: 10px 16px;
+    cursor: pointer;
+    color: var(--muted);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+  }
+  .profile-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .profile-section-label {
+    font-family: var(--font-ui);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+  .interest-chip {
+    display: inline-block;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    background: var(--accent-light);
+    color: var(--accent);
+    border-radius: 20px;
+    padding: 4px 12px;
+    margin: 3px;
+  }
+  .book-item {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 16px;
+  }
+  .book-item:last-child { border-bottom: none; }
+  .book-item .book-author {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .follow-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .follow-row:last-child { border-bottom: none; }
+  .follow-avatar {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: #fef3c7;
+    color: var(--gold);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .follow-info { flex: 1; }
+  .follow-name {
+    font-size: 15px;
+    font-family: var(--font-ui);
+    color: var(--accent);
+    cursor: pointer;
+  }
+  .follow-name:hover { text-decoration: underline; }
+  .follow-bio { font-size: 13px; color: var(--muted); font-family: var(--font-ui); }
+
+  /* PROFILE EDIT */
+  .edit-tag-row { display: flex; gap: 8px; margin-top: 8px; }
+  .edit-tag-row input { flex: 1; }
+  .tag-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .tag-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    background: var(--accent-light);
+    color: var(--accent);
+    border-radius: 20px;
+    padding: 2px 8px;
+  }
+  .tag-remove {
+    background: none;
+    color: var(--accent);
+    font-size: 14px;
+    line-height: 1;
+    padding: 0;
+    opacity: 0.6;
+  }
+  .tag-remove:hover { opacity: 1; }
+
+  /* CLICKABLE NAMES */
+  .name-link {
+    color: var(--accent);
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .name-link:hover { text-decoration: underline; }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<nav id="main-nav">
+  <a class="nav-brand" href="#" onclick="navigate('home');return false">
+    <!-- "Saloon" with cowboy hat sitting on the "S" -->
+    <span class="brand-name-wrap">
+      <span class="brand-name">Saloon</span>
+    </span>
+    <span class="nav-tagline">conversation reimagined
+      <!-- Two clinking beer mugs -->
+      <svg class="mugs-tagline" style="margin-left:6px;vertical-align:middle" width="46" height="26" viewBox="0 0 46 30" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <!-- left mug — CSS animatable, handle on left/outside -->
+        <g id="mug-l" style="transform-origin:11.5px 22px; transform:rotate(14deg)">
+          <rect x="6" y="9" width="11" height="16" rx="1.5" fill="#c9952a" stroke="#8b6510" stroke-width="0.8"/>
+          <path d="M6 12 Q1.5 12 1.5 15.5 Q1.5 19 6 19" stroke="#8b6510" stroke-width="1.1" fill="none" stroke-linecap="round"/>
+          <g id="foam-l">
+            <ellipse cx="11.5" cy="9" rx="6" ry="2.5" fill="#fff8e8" stroke="#d4a940" stroke-width="0.5"/>
+            <path d="M7 8.3 Q9.5 6 11.5 6.8 Q13.5 6 16 8.3" fill="#fff8e8" stroke="none"/>
+          </g>
+        </g>
+        <!-- right mug — CSS animatable, handle on right/outside -->
+        <g id="mug-r" style="transform-origin:32.5px 22px; transform:rotate(-14deg)">
+          <rect x="27" y="9" width="11" height="16" rx="1.5" fill="#c9952a" stroke="#8b6510" stroke-width="0.8"/>
+          <path d="M38 12 Q42.5 12 42.5 15.5 Q42.5 19 38 19" stroke="#8b6510" stroke-width="1.1" fill="none" stroke-linecap="round"/>
+          <g id="foam-r">
+            <ellipse cx="32.5" cy="9" rx="6" ry="2.5" fill="#fff8e8" stroke="#d4a940" stroke-width="0.5"/>
+            <path d="M28 8.3 Q30.5 6 32.5 6.8 Q34.5 6 37 8.3" fill="#fff8e8" stroke="none"/>
+          </g>
+        </g>
+        <!-- clink sparks -->
+        <line x1="21" y1="8" x2="19.5" y2="4" stroke="#c9952a" stroke-width="1.2" stroke-linecap="round" opacity="0.9"/>
+        <line x1="23" y1="7" x2="23" y2="3" stroke="#c9952a" stroke-width="1.2" stroke-linecap="round" opacity="0.9"/>
+        <line x1="25" y1="8" x2="26.5" y2="4" stroke="#c9952a" stroke-width="1.2" stroke-linecap="round" opacity="0.9"/>
+      </svg>
+    </span>
+  </a>
+  <div class="nav-right" id="nav-auth-area"></div>
+</nav>
+
+<div id="page-home"></div>
+<div id="page-login" style="display:none"></div>
+<div id="page-register" style="display:none"></div>
+<div id="page-reset" style="display:none"></div>
+<div id="page-conversation" style="display:none"></div>
+<div id="page-profile" style="display:none"></div>
+
+<div id="annotation-trigger">✦ Annotate selection</div>
+
+<!-- COMMENT MODAL -->
+<div class="modal-overlay" id="comment-modal">
+  <div class="modal-box" style="position:relative">
+    <button class="modal-close" onclick="closeCommentModal()">×</button>
+    <h2 id="comment-modal-title">Add Comment</h2>
+    <div id="comment-context-display"></div>
+    <div class="form-group">
+      <label>Your comment</label>
+      <textarea id="comment-input" rows="4" placeholder="Write your comment…"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
+      <button class="btn-ghost btn-sm" onclick="closeCommentModal()">Cancel</button>
+      <button class="btn-primary btn-sm" onclick="submitComment()">Post comment</button>
+    </div>
+  </div>
+</div>
+
+<!-- NEW CONVERSATION MODAL -->
+<div class="modal-overlay" id="new-conv-modal">
+  <div class="modal-box" style="position:relative">
+    <button class="modal-close" onclick="closeNewConvModal()">×</button>
+    <h2>Start a conversation</h2>
+    <div class="form-group">
+      <label>Title</label>
+      <input type="text" id="new-conv-title" placeholder="What is this conversation about?">
+    </div>
+    <div class="form-group">
+      <label>Category</label>
+      <select id="new-conv-category">
+        <option value="">— Select a category —</option>
+        <option value="Politics">Politics</option>
+        <option value="Religion">Religion</option>
+        <option value="Science">Science</option>
+        <option value="History">History</option>
+        <option value="Psychology">Psychology</option>
+        <option value="Law">Law</option>
+        <option value="Philosophy">Philosophy</option>
+        <option value="Economics">Economics</option>
+        <option value="Culture">Culture</option>
+        <option value="Technology">Technology</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Opening message</label>
+      <textarea id="new-conv-body" rows="5" placeholder="Begin the conversation…"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
+      <button class="btn-ghost btn-sm" onclick="closeNewConvModal()">Cancel</button>
+      <button class="btn-primary btn-sm" onclick="submitNewConversation()">Start conversation</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+// ─── BACKEND CONFIG ────────────────────────────────────────────────────────────
+// Set BACKEND_URL to your server address to enable shared/persistent mode.
+// Leave as null to run standalone — all data stays in this browser only.
+//
+//   Local mode  : const BACKEND_URL = null;
+//   Server mode : const BACKEND_URL = 'http://localhost:3000';
+//                 const BACKEND_URL = 'https://your-domain.com';
+//
+const BACKEND_URL = 'https://saloonorg-production.up.railway.app';
+
+// Low-level fetch wrapper. Returns parsed JSON or throws with a clean message.
+async function apiCall(method, path, body) {
+  if (!BACKEND_URL) return null;
+  const jwt = localStorage.getItem('saloon_jwt');
+  const res = await fetch(BACKEND_URL + path, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(jwt ? { Authorization: 'Bearer ' + jwt } : {})
+    },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {})
+  });
+  if (res.status === 204) return null;
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+// Fire-and-forget: write to backend without blocking the UI.
+function bw(method, path, body) {
+  if (!BACKEND_URL) return;
+  apiCall(method, path, body).catch(e => console.warn('[Saloon backend write]', path, e.message));
+}
+
+// Pull latest data from backend and hydrate the local DB, then re-render.
+async function backendInit() {
+  if (!BACKEND_URL) return;
+  try {
+    const data = await apiCall('GET', '/api/data');
+    if (data) {
+      DB.users         = data.users        || DB.users;
+      DB.conversations = data.conversations || DB.conversations;
+      DB.posts         = data.posts        || DB.posts;
+      DB.comments      = data.comments     || DB.comments;
+      DB.invitations   = data.invitations  || DB.invitations;
+      DB.save();
+    }
+    // Re-validate the stored JWT
+    const stored = localStorage.getItem('saloon_jwt');
+    if (stored) {
+      const me = await apiCall('GET', '/api/auth/me').catch(() => null);
+      if (me) {
+        currentUser = me;
+        const idx = DB.users.findIndex(u => u.id === me.id);
+        if (idx >= 0) DB.users[idx] = me; else DB.users.push(me);
+        DB.save();
+      } else {
+        localStorage.removeItem('saloon_jwt');
+        localStorage.removeItem('saloon_session');
+        currentUser = null;
+      }
+    }
+  } catch(e) {
+    console.warn('[Saloon] Backend unreachable — running in local mode.', e.message);
+  }
+}
+
+// ─── CATEGORIES ───────────────────────────────────────────────────────────────
+
+const CATEGORIES = ['Politics','Religion','Science','History','Psychology','Law','Philosophy','Economics','Culture','Technology'];
+
+// ─── DATA LAYER ───────────────────────────────────────────────────────────────
+
+const DB = {
+  users: [],
+  conversations: [],
+  posts: [],
+  comments: [],
+  invitations: [],
+
+  save() {
+    _scoreCache.clear();
+    try {
+      // ID data is intentionally excluded — stored separately in IDSTORE
+      const payload = {
+        users: DB.users.map(u => {
+          const { idFile, ...safe } = u; // never persist raw ID image in main DB
+          return safe;
+        }),
+        conversations: DB.conversations,
+        posts: DB.posts,
+        comments: DB.comments,
+        invitations: DB.invitations || []
+      };
+      localStorage.setItem('saloon_v1', JSON.stringify(payload));
+    } catch(e) { console.warn('Save failed', e); }
+  },
+
+  load() {
+    try {
+      const raw = localStorage.getItem('saloon_v1');
+      if (raw) {
+        const d = JSON.parse(raw);
+        DB.users = d.users || [];
+        DB.conversations = d.conversations || [];
+        DB.posts = d.posts || [];
+        DB.comments = d.comments || [];
+        DB.invitations = d.invitations || [];
+        // Migrate: clear any garbled categories left over from the template-literal bug
+        const _validCats = new Set(['Politics','Religion','Science','History','Psychology','Law','Philosophy','Economics','Culture','Technology']);
+        DB.conversations.forEach(c => { if (c.category && !_validCats.has(c.category)) c.category = ''; });
+      }
+    } catch(e) { DB.users=[]; DB.conversations=[]; DB.posts=[]; DB.comments=[]; }
+  },
+
+  uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+};
+
+// ─── ID STORE (isolated from main DB) ────────────────────────────────────────
+// ID images are kept in a separate, obfuscated key so they are not
+// bundled with general user data and cannot be accessed via the main DB object.
+
+const IDSTORE = {
+  _key(userId) {
+    // Slightly obfuscated key — not security through obscurity alone, but
+    // ensures casual DB inspection doesn't surface raw ID images.
+    return 'sl_' + btoa(userId).replace(/=/g,'') + '_id';
+  },
+  set(userId, dataUrl) {
+    try { localStorage.setItem(this._key(userId), dataUrl); } catch(e) {}
+  },
+  has(userId) {
+    return !!localStorage.getItem(this._key(userId));
+  },
+  // No public get() — ID data should never be read back into the app.
+  // A real deployment would send the file to a secure server endpoint instead.
+  clear(userId) {
+    try { localStorage.removeItem(this._key(userId)); } catch(e) {}
+  }
+};
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+
+function displayName(user) {
+  if (!user) return 'Unknown';
+  return (user.firstName + ' ' + user.lastName).trim();
+}
+
+function nameLink(user, extraStyle) {
+  if (!user) return '<span style="color:var(--muted)">Unknown</span>';
+  const style = extraStyle ? ` style="${extraStyle}"` : '';
+  return `<a class="name-link"${style} onclick="navigate('profile','${user.id}');return false" href="#">${esc(displayName(user))}</a>`;
+}
+
+function initials(user) {
+  if (!user) return '?';
+  return ((user.firstName||'')[0]||'') + ((user.lastName||'')[0]||'');
+}
+
+// ─── AUTH ─────────────────────────────────────────────────────────────────────
+
+let currentUser = null;
+
+// getAuthUser() re-derives the authenticated user fresh from the session token
+// on every call. All write operations must use this rather than trusting the
+// currentUser variable, which could be tampered with via the browser console.
+function getAuthUser() {
+  const uid = localStorage.getItem('saloon_session');
+  if (!uid) return null;
+  return DB.users.find(u => u.id === uid) || null;
+}
+
+function loadSession() {
+  currentUser = getAuthUser();
+}
+
+function login(email, password) {
+  // Local mode: validate against hashed password in DB
+  const u = DB.users.find(u => u.email.toLowerCase() === email.toLowerCase().trim());
+  if (!u) return 'No account found with that email.';
+  if (!checkPassword(password, u.passwordHash)) return 'Incorrect password.';
+  currentUser = u;
+  localStorage.setItem('saloon_session', u.id);
+  return null;
+}
+
+// Backend-aware login used by the login form submit handler
+async function loginAsync(email, password) {
+  if (!BACKEND_URL) return login(email, password); // fall back to local
+  try {
+    const res = await apiCall('POST', '/api/auth/login', { email, password });
+    // Merge server user into local DB
+    const idx = DB.users.findIndex(u => u.id === res.user.id);
+    if (idx >= 0) DB.users[idx] = res.user; else DB.users.push(res.user);
+    DB.save();
+    currentUser = res.user;
+    localStorage.setItem('saloon_session', res.user.id);
+    localStorage.setItem('saloon_jwt', res.token);
+    return null;
+  } catch(e) { return e.message; }
+}
+
+function logout() {
+  currentUser = null;
+  localStorage.removeItem('saloon_session');
+  localStorage.removeItem('saloon_jwt');
+  navigate('home');
+}
+
+function register(firstName, lastName, email, password, idFile, idFileName) {
+  if (!firstName || firstName.length < 1) return 'Please enter your first name.';
+  if (!lastName || lastName.length < 1) return 'Please enter your last name.';
+  if (!email || !email.includes('@')) return 'Please enter a valid email address.';
+  if (DB.users.find(u => u.email.toLowerCase() === email.toLowerCase().trim()))
+    return 'An account with that email already exists.';
+  if (password.length < 6) return 'Password must be at least 6 characters.';
+  if (!idFile) return 'Please upload a valid photo ID.';
+  // Zero out the in-memory variable immediately after validation — it will go to IDSTORE only
+
+  const u = {
+    id: DB.uid(),
+    firstName: firstName.trim(),
+    lastName: lastName.trim(),
+    email: email.toLowerCase().trim(),
+    passwordHash: hashPassword(password),
+    idFileName,           // filename only — never store the raw image in the user record
+    idSubmitted: true,    // flag that ID was provided; actual file is in IDSTORE
+    verified: false,
+    createdAt: Date.now()
+  };
+  // Store the ID image completely separately, isolated from the main DB object
+  IDSTORE.set(u.id, idFile);
+  DB.users.push(u);
+  // Auto-join any conversations this email was invited to
+  const pending = (DB.invitations || []).filter(i => i.email === u.email);
+  pending.forEach(inv => {
+    const c = DB.conversations.find(c => c.id === inv.convId);
+    if (c && !(c.participants || []).includes(u.id)) c.participants.push(u.id);
+  });
+  DB.invitations = (DB.invitations || []).filter(i => i.email !== u.email);
+  DB.save();
+  currentUser = u;
+  localStorage.setItem('saloon_session', u.id);
+  return null;
+}
+
+function hashPassword(pw) {
+  let h = 0;
+  for (let i = 0; i < pw.length; i++) h = ((h << 5) - h) + pw.charCodeAt(i);
+  return (h >>> 0).toString(36) + pw.length.toString(36) + pw.charCodeAt(0).toString(36);
+}
+function checkPassword(pw, hash) { return hashPassword(pw) === hash; }
+
+// ─── ENGAGEMENT ALGORITHM ─────────────────────────────────────────────────────
+
+const _scoreCache = new Map();
+
+function engagementScore(conv) {
+  if (_scoreCache.has(conv.id)) return _scoreCache.get(conv.id);
+  const posts = DB.posts.filter(p => p.conversationId === conv.id);
+  const comments = DB.comments.filter(c => c.conversationId === conv.id);
+  const lastTs = Math.max(conv.createdAt, ...posts.map(p => p.createdAt), ...comments.map(c => c.createdAt), 0);
+  const hoursAgo = (Date.now() - lastTs) / 3600000;
+  const recencyBoost = Math.exp(-hoursAgo / 72) * 25;
+  const netVotes = (conv.likes || []).length - (conv.dislikes || []).length;
+  const score = netVotes * 3 + posts.length * 4 + comments.length * 2 + (conv.viewCount || 0) * 0.08 + recencyBoost;
+  _scoreCache.set(conv.id, score);
+  return score;
+}
+
+// ─── ROUTER ───────────────────────────────────────────────────────────────────
+
+let currentPage = 'home';
+let currentConvId = null;
+let navStack = [];
+
+function _setHash(page, id) {
+  const h = '#' + page + (id ? '/' + id : '');
+  if (location.hash !== h) location.hash = h;
+}
+
+function navigate(page, id) {
+  // Push current location onto the back-stack before leaving
+  if (currentPage) navStack.push({ page: currentPage, id: currentConvId });
+  if (navStack.length > 20) navStack.shift();
+  currentPage = page;
+  currentConvId = id || null;
+  _setHash(page, id);
+  ['home','login','register','conversation','profile','reset'].forEach(p => {
+    document.getElementById('page-' + p).style.display = 'none';
+  });
+  const target = document.getElementById('page-' + page);
+  if (target) { target.style.display = ''; renderPage(page, id); }
+  window.scrollTo(0, 0);
+  renderNav();
+}
+
+function navigateBack() {
+  const prev = navStack.pop();
+  if (!prev) { navigate('home'); return; }
+  currentPage = prev.page;
+  currentConvId = prev.id || null;
+  _setHash(prev.page, prev.id);
+  ['home','login','register','conversation','profile','reset'].forEach(p => {
+    document.getElementById('page-' + p).style.display = 'none';
+  });
+  const target = document.getElementById('page-' + currentPage);
+  if (target) { target.style.display = ''; renderPage(currentPage, currentConvId); }
+  window.scrollTo(0, 0);
+  renderNav();
+}
+
+function parseHash() {
+  const h = location.hash.replace('#', '');
+  if (!h || h === 'home') return { page: 'home', id: null };
+  const [page, id] = h.split('/');
+  const valid = ['home','login','register','conversation','profile','reset'];
+  return valid.includes(page) ? { page, id: id || null } : { page: 'home', id: null };
+}
+
+window.addEventListener('hashchange', function() {
+  const { page, id } = parseHash();
+  if (page === currentPage && id === currentConvId) return;
+  navigate(page, id);
+});
+
+function copyConvLink() {
+  const url = location.href;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(url).then(() => toast('Link copied to clipboard.')).catch(() => prompt('Copy this link:', url));
+  } else {
+    prompt('Copy this link:', url);
+  }
+}
+
+function renderPage(page, id) {
+  switch(page) {
+    case 'home': renderHome(); break;
+    case 'login': renderLogin(); break;
+    case 'register': renderRegister(); break;
+    case 'conversation': renderConversation(id); break;
+    case 'profile': renderProfile(id); break;
+    case 'reset': renderResetPassword(id); break;
+  }
+}
+
+// ─── NAV ──────────────────────────────────────────────────────────────────────
+
+function renderNav() {
+  const area = document.getElementById('nav-auth-area');
+  if (currentUser) {
+    area.innerHTML = `
+      <a class="nav-user name-link" onclick="navigate('profile','${currentUser.id}');return false" href="#">${esc(displayName(currentUser))}</a>
+      ${!currentUser.verified ? `<span class="badge pending">ID pending</span>` : ''}
+      <button class="btn-primary btn-sm" onclick="openNewConvModal()">+ New</button>
+      <button class="btn-ghost btn-sm" onclick="logout()">Sign out</button>
+    `;
+  } else {
+    area.innerHTML = `
+      <button class="btn-ghost btn-sm" onclick="navigate('login')">Sign in</button>
+      <button class="btn-primary btn-sm" onclick="navigate('register')">Join</button>
+    `;
+  }
+}
+
+// ─── HOME PAGE ────────────────────────────────────────────────────────────────
+
+let feedSort = 'top';
+let feedCategory = '';
+
+function renderHome() {
+  const el = document.getElementById('page-home');
+  let convs = [...DB.conversations];
+
+  if (feedCategory) convs = convs.filter(c => c.category === feedCategory);
+
+  if (feedSort === 'top') {
+    convs.sort((a, b) => engagementScore(b) - engagementScore(a));
+  } else if (feedSort === 'new') {
+    convs.sort((a, b) => b.createdAt - a.createdAt);
+  } else if (feedSort === 'active') {
+    convs.sort((a, b) => {
+      const la = Math.max(b.createdAt, ...DB.posts.filter(p=>p.conversationId===b.id).map(p=>p.createdAt), 0);
+      const lb = Math.max(a.createdAt, ...DB.posts.filter(p=>p.conversationId===a.id).map(p=>p.createdAt), 0);
+      return la - lb;
+    });
+  }
+
+  const tabs = ['top','new','active'];
+  const tabLabels = { top: 'Top', new: 'New', active: 'Recently Active' };
+
+  el.innerHTML = `
+    <div class="container">
+      <div class="page-header">
+        <h1>Saloon <span style="color:var(--gold);font-size:18px;vertical-align:middle;opacity:0.6">&#10022;</span></h1>
+        <p>Open conversations. Anyone can read. <a href="#" onclick="navigate('register');return false">Join</a> to participate.</p>
+      </div>
+
+      <div class="category-filter">
+        <span class="cat-pill ${feedCategory===''?'active':''}" onclick="setCategoryFilter('')">All</span>
+        ${CATEGORIES.map(c => `<span class="cat-pill ${feedCategory===c?'active':''}" onclick="setCategoryFilter('${c}')">${c}</span>`).join('')}
+      </div>
+
+      <div class="feed-tabs">
+        ${tabs.map(t => `<div class="feed-tab ${feedSort===t?'active':''}" onclick="setFeedSort('${t}')">${tabLabels[t]}</div>`).join('')}
+      </div>
+
+      ${convs.length === 0
+        ? `<div class="empty-state">
+            <div class="empty-icon">⌬</div>
+            <h3>No conversations yet${feedCategory ? ' in ' + feedCategory : ''}</h3>
+            <p>${currentUser ? 'Start the first one.' : 'Sign in to start the first conversation.'}</p>
+          </div>`
+        : `<div class="feed">${convs.map(renderFeedItem).join('')}</div>`
+      }
+    </div>
+  `;
+}
+
+function setFeedSort(s) { feedSort = s; renderHome(); }
+function setCategoryFilter(c) { feedCategory = c; renderHome(); }
+
+function renderFeedItem(conv) {
+  const posts = DB.posts.filter(p => p.conversationId === conv.id);
+  const comments = DB.comments.filter(c => c.conversationId === conv.id);
+  const creator = DB.users.find(u => u.id === conv.creatorId);
+  const snippet = posts[0] ? posts[0].content.slice(0, 160) + (posts[0].content.length > 160 ? '…' : '') : '';
+  return `
+    <div class="feed-item" onclick="navigate('conversation','${conv.id}')">
+      <div class="feed-item-title">
+        ${esc(conv.title)}
+        ${conv.category ? `<span class="cat-badge">${esc(conv.category)}</span>` : ''}
+      </div>
+      <div class="feed-item-meta">
+        <span>by <strong>${nameLink(creator)}</strong></span>
+        <span class="meta-stat">${conv.viewCount||0} views</span>
+        <span class="meta-stat">↑${(conv.likes||[]).length} ↓${(conv.dislikes||[]).length}</span>
+        <span class="meta-stat">✦ ${posts.length} conversations</span>
+        <span class="meta-stat">◎ ${comments.length} comments</span>
+        <span>${timeAgo(conv.createdAt)}</span>
+      </div>
+      ${snippet ? `<div class="feed-item-snippet">${esc(snippet)}</div>` : ''}
+    </div>
+  `;
+}
+
+// ─── LOGIN PAGE ───────────────────────────────────────────────────────────────
+
+function renderLogin() {
+  document.getElementById('page-login').innerHTML = `
+    <div class="container">
+      <div class="auth-card">
+        <h2>Welcome back</h2>
+        <p class="auth-sub">Sign in to your Saloon account</p>
+        <div class="form-group">
+          <label>Email address</label>
+          <input type="email" id="login-email" placeholder="you@example.com" autocomplete="email">
+        </div>
+        <div class="form-group">
+          <label style="display:flex;justify-content:space-between">Password
+            <a href="#" onclick="showForgotPassword();return false" style="font-weight:400;font-size:12px;color:var(--muted)">Forgot password?</a>
+          </label>
+          <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password">
+        </div>
+        <div id="login-error" style="color:var(--danger);font-size:13px;font-family:var(--font-ui);margin-top:-4px;display:none"></div>
+        <div id="login-resend" style="display:none;font-size:13px;font-family:var(--font-ui);margin-top:4px">
+          <a href="#" onclick="resendVerification();return false">Resend verification email</a>
+        </div>
+        <div class="form-actions">
+          <button class="btn-primary" onclick="doLogin()">Sign in</button>
+        </div>
+        <div class="auth-switch">
+          Don't have an account? <a href="#" onclick="navigate('register');return false">Join Saloon</a>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('login-password').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+}
+
+async function doLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const btn = document.querySelector('#page-login .btn-primary');
+  if (btn) btn.disabled = true;
+  const err = await loginAsync(email, password);
+  if (btn) btn.disabled = false;
+  if (err) {
+    const el = document.getElementById('login-error');
+    el.textContent = err; el.style.display = '';
+    if (err.includes('verify your email')) {
+      document.getElementById('login-resend').style.display = '';
+    }
+  } else {
+    renderNav();
+    navigate('home');
+    toast('Welcome back, ' + displayName(currentUser) + '.');
+  }
+}
+
+async function resendVerification() {
+  const email = document.getElementById('login-email').value.trim();
+  if (!email) { toast('Enter your email address first.'); return; }
+  await apiCall('POST', '/api/auth/resend-verification', { email }).catch(() => {});
+  toast('Verification email sent — check your inbox.');
+}
+
+function showForgotPassword() {
+  document.getElementById('page-login').innerHTML = `
+    <div class="container">
+      <div class="auth-card">
+        <h2>Reset password</h2>
+        <p class="auth-sub">Enter your email and we'll send you a reset link</p>
+        <div class="form-group">
+          <label>Email address</label>
+          <input type="email" id="forgot-email" placeholder="you@example.com" autocomplete="email">
+        </div>
+        <div id="forgot-msg" style="font-size:13px;font-family:var(--font-ui);margin-top:-4px;display:none"></div>
+        <div class="form-actions">
+          <button class="btn-primary" onclick="doForgotPassword()">Send reset link</button>
+        </div>
+        <div class="auth-switch">
+          <a href="#" onclick="navigate('login');return false">← Back to sign in</a>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('forgot-email').addEventListener('keydown', e => { if(e.key==='Enter') doForgotPassword(); });
+}
+
+async function doForgotPassword() {
+  const email = document.getElementById('forgot-email').value.trim();
+  const btn = document.querySelector('#page-login .btn-primary');
+  if (btn) btn.disabled = true;
+  await apiCall('POST', '/api/auth/forgot-password', { email }).catch(() => {});
+  if (btn) btn.disabled = false;
+  const msg = document.getElementById('forgot-msg');
+  msg.style.color = 'var(--accent)';
+  msg.textContent = 'If an account exists for that email, a reset link is on its way.';
+  msg.style.display = '';
+}
+
+function renderResetPassword(token) {
+  const t = token || new URLSearchParams(location.search).get('reset') || '';
+  document.getElementById('page-reset').innerHTML = `
+    <div class="container">
+      <div class="auth-card">
+        <h2>Choose a new password</h2>
+        <div class="form-group">
+          <label>New password</label>
+          <input type="password" id="reset-pw" placeholder="at least 6 characters" autocomplete="new-password">
+        </div>
+        <div class="form-group">
+          <label>Confirm password</label>
+          <input type="password" id="reset-pw2" placeholder="repeat password" autocomplete="new-password">
+        </div>
+        <div id="reset-msg" style="font-size:13px;font-family:var(--font-ui);margin-top:-4px;display:none"></div>
+        <div class="form-actions">
+          <button class="btn-primary" onclick="doResetPassword('${t}')">Set new password</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function doResetPassword(token) {
+  const pw = document.getElementById('reset-pw').value;
+  const pw2 = document.getElementById('reset-pw2').value;
+  const msg = document.getElementById('reset-msg');
+  if (pw.length < 6) { msg.style.color='var(--danger)'; msg.textContent='Password must be at least 6 characters.'; msg.style.display=''; return; }
+  if (pw !== pw2) { msg.style.color='var(--danger)'; msg.textContent='Passwords do not match.'; msg.style.display=''; return; }
+  const btn = document.querySelector('#page-reset .btn-primary');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await apiCall('POST', '/api/auth/reset-password', { token, password: pw });
+    currentUser = res.user;
+    localStorage.setItem('saloon_session', res.user.id);
+    localStorage.setItem('saloon_jwt', res.token);
+    history.replaceState(null, '', location.pathname);
+    renderNav();
+    navigate('home');
+    toast('Password updated. Welcome back, ' + displayName(currentUser) + '.');
+  } catch(e) {
+    msg.style.color='var(--danger)'; msg.textContent=e.message; msg.style.display='';
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ─── REGISTER PAGE ────────────────────────────────────────────────────────────
+
+let pendingIdFile = null;
+let pendingIdFileName = null;
+
+function renderRegister() {
+  document.getElementById('page-register').innerHTML = `
+    <div class="container">
+      <div class="auth-card" style="max-width:480px">
+        <h2>Join Saloon</h2>
+        <p class="auth-sub">Your real name is required — Saloon is a space for accountable conversation</p>
+        <div class="form-row">
+          <div class="form-group">
+            <label>First name</label>
+            <input type="text" id="reg-firstname" placeholder="First" autocomplete="given-name">
+          </div>
+          <div class="form-group">
+            <label>Last name</label>
+            <input type="text" id="reg-lastname" placeholder="Last" autocomplete="family-name">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Email address</label>
+          <input type="email" id="reg-email" placeholder="you@example.com" autocomplete="email">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="reg-password" placeholder="at least 6 characters" autocomplete="new-password">
+        </div>
+        <div class="form-group">
+          <label>Photo ID <span style="text-transform:none;letter-spacing:0;font-size:12px;color:var(--muted)">(government or student ID required)</span></label>
+          <div class="id-upload-area" id="id-upload-area" onclick="document.getElementById('id-file-input').click()">
+            <input type="file" id="id-file-input" accept="image/*,.pdf" onchange="handleIdUpload(event)">
+            <div id="id-upload-label">📄 Click to upload ID (image or PDF)</div>
+          </div>
+          <div class="form-note">Your name will be taken from your ID. In a live deployment, an administrator would verify your ID before activating your account.</div>
+        </div>
+        <div id="reg-error" style="color:var(--danger);font-size:13px;font-family:var(--font-ui);margin-top:-4px;display:none"></div>
+        <div class="form-actions">
+          <button class="btn-primary" onclick="doRegister()">Create account</button>
+        </div>
+        <div class="auth-switch">
+          Already have an account? <a href="#" onclick="navigate('login');return false">Sign in</a>
+        </div>
+      </div>
+    </div>
+  `;
+  pendingIdFile = null; pendingIdFileName = null;
+}
+
+function handleIdUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  document.getElementById('id-upload-area').classList.add('has-file');
+  document.getElementById('id-upload-label').textContent = '✓ ' + file.name;
+  const reader = new FileReader();
+  reader.onload = ev => { pendingIdFile = ev.target.result; pendingIdFileName = file.name; };
+  reader.readAsDataURL(file);
+}
+
+async function doRegister() {
+  const firstName = document.getElementById('reg-firstname').value.trim();
+  const lastName = document.getElementById('reg-lastname').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+  const password = document.getElementById('reg-password').value;
+  const errEl = document.getElementById('reg-error');
+  const btn = document.querySelector('#page-register .btn-primary');
+
+  if (BACKEND_URL) {
+    // Backend mode: validate locally first, then call server
+    if (!firstName) { errEl.textContent = 'Please enter your first name.'; errEl.style.display = ''; return; }
+    if (!lastName)  { errEl.textContent = 'Please enter your last name.';  errEl.style.display = ''; return; }
+    if (!email || !email.includes('@')) { errEl.textContent = 'Please enter a valid email.'; errEl.style.display = ''; return; }
+    if (password.length < 6) { errEl.textContent = 'Password must be at least 6 characters.'; errEl.style.display = ''; return; }
+    if (!pendingIdFile) { errEl.textContent = 'Please upload a valid photo ID.'; errEl.style.display = ''; return; }
+    if (btn) btn.disabled = true;
+    try {
+      const res = await apiCall('POST', '/api/auth/register', {
+        firstName, lastName, email, password,
+        idFileName: pendingIdFileName || ''
+      });
+      // Store ID image locally in IDSTORE (never sent to server in full)
+      IDSTORE.set(res.user.id, pendingIdFile);
+      pendingIdFile = null;
+      const idx = DB.users.findIndex(u => u.id === res.user.id);
+      if (idx >= 0) DB.users[idx] = res.user; else DB.users.push(res.user);
+      DB.save();
+      // Don't log them in yet — show email verification notice
+      document.getElementById('page-register').innerHTML = `
+        <div class="container">
+          <div class="auth-card" style="max-width:480px;text-align:center">
+            <div style="font-size:48px;margin-bottom:16px">📬</div>
+            <h2>Check your email</h2>
+            <p class="auth-sub" style="margin-bottom:16px">We sent a verification link to <strong>${esc(res.user.email)}</strong>. Click it to activate your account.</p>
+            <p style="font-size:13px;color:var(--muted);font-family:var(--font-ui)">Didn't get it? <a href="#" onclick="resendVerificationTo('${esc(res.user.email)}');return false">Resend email</a></p>
+          </div>
+        </div>
+      `;
+    } catch(e) {
+      errEl.textContent = e.message; errEl.style.display = '';
+    }
+    if (btn) btn.disabled = false;
+  } else {
+    // Local mode
+    const err = register(firstName, lastName, email, password, pendingIdFile, pendingIdFileName);
+    if (err) {
+      errEl.textContent = err; errEl.style.display = '';
+    } else {
+      pendingIdFile = null;
+      renderNav();
+      navigate('home');
+      toast('Welcome to Saloon, ' + displayName(currentUser) + '. Your ID is pending review.');
+    }
+  }
+}
+
+// ─── CONVERSATION PAGE ────────────────────────────────────────────────────────
+
+let editingTitle = false;
+let editingCategory = false;
+let commentView = 'inline'; // 'inline' | 'sidebar' | 'hidden'
+
+function renderConversation(id) {
+  const conv = DB.conversations.find(c => c.id === id);
+  if (!conv) { navigate('home'); return; }
+
+  const viewKey = 'viewed_' + id;
+  if (!sessionStorage.getItem(viewKey)) {
+    conv.viewCount = (conv.viewCount || 0) + 1;
+    sessionStorage.setItem(viewKey, '1');
+    DB.save();
+  }
+
+  const creator = DB.users.find(u => u.id === conv.creatorId);
+  const isCreator = currentUser && currentUser.id === conv.creatorId;
+  const isParticipant = currentUser && (conv.participants || []).includes(currentUser.id);
+  const posts = DB.posts.filter(p => p.conversationId === id).sort((a,b) => a.createdAt - b.createdAt);
+  const convComments = DB.comments.filter(c => c.conversationId === id && !c.postId).sort((a,b) => a.createdAt - b.createdAt);
+  const allComments = DB.comments.filter(c => c.conversationId === id);
+  const userLiked = currentUser && (conv.likes||[]).includes(currentUser.id);
+  const userDisliked = currentUser && (conv.dislikes||[]).includes(currentUser.id);
+
+  const el = document.getElementById('page-conversation');
+  el.innerHTML = `
+    <div class="container">
+      <div style="margin-bottom:20px">
+        <a href="#" onclick="navigateBack();return false" style="font-family:var(--font-ui);font-size:13px;color:var(--muted)">← Back</a>
+      </div>
+
+      <div class="conv-header">
+        ${editingCategory && isCreator
+          ? `<div style="margin-bottom:12px;display:flex;align-items:center;gap:8px">
+               <select id="category-edit-select" style="width:auto;font-family:var(--font-ui);font-size:13px;padding:4px 8px">
+                 <option value="">— Select a category —</option>
+                 ${CATEGORIES.map(c => `<option value="${c}" ${conv.category===c?'selected':''}>${c}</option>`).join('')}
+               </select>
+               <button class="btn-primary btn-sm" onclick="saveCategory('${id}',true)">Save</button>
+               <button class="btn-ghost btn-sm" onclick="saveCategory('${id}',false)">Cancel</button>
+             </div>`
+          : `<div style="margin-bottom:10px;display:flex;align-items:center;gap:8px">
+               ${conv.category ? `<span class="cat-badge">${esc(conv.category)}</span>` : `<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);font-style:italic">No category</span>`}
+               ${isCreator ? `<button class="btn-ghost btn-sm" onclick="editingCategory=true;renderConversation('${id}')">Edit category</button>` : ''}
+             </div>`
+        }
+        <div class="conv-title-wrap">
+          ${editingTitle && isCreator
+            ? `<input class="conv-title-input" id="title-edit-input" value="${esc(conv.title)}"
+                onblur="saveTitle('${id}',false)"
+                onkeydown="if(event.key==='Enter')saveTitle('${id}',true);if(event.key==='Escape'){editingTitle=false;renderConversation('${id}')}">
+               <button class="btn-primary btn-sm" onclick="saveTitle('${id}',true)" style="margin-top:6px;flex-shrink:0">Save</button>`
+            : `<h1 class="conv-title">${esc(conv.title)}</h1>
+               ${isCreator ? `<button class="btn-ghost btn-sm" onclick="startEditTitle('${id}')" style="margin-top:6px;flex-shrink:0">Edit title</button>` : ''}`
+          }
+        </div>
+
+        <div class="conv-meta">
+          <span>Started by <strong>${nameLink(creator)}</strong></span>
+          <span>${timeAgo(conv.createdAt)}</span>
+          <span class="stat-pill">${conv.viewCount||0} views</span>
+          <span class="stat-pill clickable ${userLiked?'active-like':''}" onclick="voteConv('${id}','like')">↑ ${(conv.likes||[]).length}</span>
+          <span class="stat-pill clickable ${userDisliked?'active-dislike':''}" onclick="voteConv('${id}','dislike')">↓ ${(conv.dislikes||[]).length}</span>
+          <span class="stat-pill">✦ ${posts.length} conversations</span>
+          <span class="stat-pill">◎ ${allComments.length} comments</span>
+          <span class="stat-pill clickable" onclick="copyConvLink()" title="Copy shareable link">⎘ Share</span>
+        </div>
+
+        <div class="participants-list" style="margin-top:14px">
+          ${(conv.participants||[]).map(uid => {
+            const u = DB.users.find(x => x.id === uid);
+            return u ? `<a class="participant-chip name-link" onclick="navigate('profile','${u.id}');return false" href="#">${esc(displayName(u))}</a>` : '';
+          }).join('')}
+        </div>
+      </div>
+
+      <div class="comment-view-toggle" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <span>Comments:</span>
+        <button class="cvt-btn ${commentView==='inline'?'active':''}" onclick="setCommentView('inline','${id}')">Inline</button>
+        <button class="cvt-btn ${commentView==='sidebar'?'active':''}" onclick="setCommentView('sidebar','${id}')">Sidebar</button>
+        <button class="cvt-btn ${commentView==='hidden'?'active':''}" onclick="setCommentView('hidden','${id}')">Hidden</button>
+        ${currentUser ? `<button class="btn-ghost btn-sm" style="margin-left:auto" onclick="openAnnotateModal(null,'${id}',null)">◎ Comment on conversation</button>` : ''}
+      </div>
+
+      <div class="posts" id="posts-container">
+        ${posts.length === 0
+          ? `<div class="empty-state" style="padding:40px 0"><div class="empty-icon">✦</div><h3>No posts yet</h3><p>${isParticipant ? 'Be the first to write.' : ''}</p></div>`
+          : posts.map(p => renderPost(p, id)).join('')
+        }
+      </div>
+
+      ${isParticipant ? `
+        <div class="compose-area" style="margin-top:28px">
+          <h4>Add to the conversation</h4>
+          <textarea id="post-compose" placeholder="Write your thoughts…"></textarea>
+          <div class="submit-row">
+            <span class="compose-hint">Select text in any post to annotate it. Use "◎ Comment on conversation" to comment on the whole piece.</span>
+            <button class="btn-primary btn-sm" onclick="submitPost('${id}')">Contribute</button>
+          </div>
+        </div>
+      ` : (!currentUser ? `
+        <div style="text-align:center;padding:28px 0;font-family:var(--font-ui);font-size:14px;color:var(--muted)">
+          <a href="#" onclick="navigate('login');return false">Sign in</a> to comment on this conversation.
+        </div>
+      ` : `
+        <div style="text-align:center;padding:20px 0 8px;font-family:var(--font-ui);font-size:14px;color:var(--muted)">
+          You're not a participant — you may still comment on the conversation below.
+        </div>
+      `)}
+
+      <div class="conv-comments-section">
+        <h3>Comments on this conversation</h3>
+        <p style="font-family:var(--font-ui);font-size:12px;color:var(--muted);margin-bottom:16px">Remarks on the conversation as a whole — not tied to any individual post.</p>
+        ${convComments.length === 0
+          ? `<p style="font-family:var(--font-ui);font-size:14px;color:var(--muted)">No comments yet.</p>`
+          : convComments.map(renderCommentItem).join('')
+        }
+        ${currentUser ? `
+          <div style="margin-top:20px">
+            <textarea id="conv-comment-input" placeholder="Share your overall thoughts on this conversation…" rows="3"></textarea>
+            <div style="display:flex;justify-content:flex-end;margin-top:8px">
+              <button class="btn-primary btn-sm" onclick="submitConvComment('${id}')">Post comment</button>
+            </div>
+          </div>
+        ` : `<div style="font-family:var(--font-ui);font-size:13px;color:var(--muted);margin-top:14px"><a href="#" onclick="navigate('login');return false">Sign in</a> to comment.</div>`}
+      </div>
+
+      ${isParticipant ? `
+        <div class="participants-panel">
+          <h4>Participants</h4>
+          <div class="participants-list">
+            ${(conv.participants||[]).map(uid => {
+              const u = DB.users.find(x => x.id === uid);
+              return u ? `<a class="participant-chip name-link" onclick="navigate('profile','${u.id}');return false" href="#">${esc(displayName(u))}</a>` : '';
+            }).join('')}
+            ${(DB.invitations||[]).filter(i => i.convId === id).map(i =>
+              `<span class="participant-chip" style="opacity:0.45;font-style:italic;cursor:default" title="Invitation sent">${esc(i.email)} (invited)</span>`
+            ).join('')}
+          </div>
+          <div class="add-participant-row">
+            <input type="email" id="add-participant-input" placeholder="Add by email address…">
+            <button class="btn-primary btn-sm" onclick="addParticipant('${id}')">Add</button>
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+
+  if (editingTitle) {
+    const inp = document.getElementById('title-edit-input');
+    if (inp) { inp.focus(); inp.select(); }
+  }
+
+  setupTextSelection(id);
+}
+
+function renderPost(post, convId) {
+  const author = DB.users.find(u => u.id === post.authorId);
+  const postComments = DB.comments.filter(c => c.postId === post.id).sort((a,b) => a.createdAt - b.createdAt);
+
+  const authorLine = `
+    <div class="post-author">
+      <span>${nameLink(author, 'font-weight:500')} · ${timeAgo(post.createdAt)}</span>
+      ${currentUser ? `<button class="post-action-btn" onclick="openAnnotateModal('${post.id}','${convId}',null)">◎ comment</button>` : ''}
+    </div>
+  `;
+  const contentHtml = `<div class="post-content" id="post-content-${post.id}">${renderAnnotatedContent(post.content, postComments)}</div>`;
+
+  let inner;
+  if (commentView === 'sidebar') {
+    const sidebarContent = postComments.length > 0
+      ? postComments.map(renderAnnotationBubble).join('')
+      : `<span class="post-sidebar-empty">no annotations</span>`;
+    inner = `
+      <div class="post-split">
+        <div class="post-main">${authorLine}${contentHtml}</div>
+        <div class="post-sidebar">${sidebarContent}</div>
+      </div>
+    `;
+  } else if (commentView === 'hidden') {
+    inner = `${authorLine}${contentHtml}`;
+  } else {
+    // inline (default)
+    inner = `
+      ${authorLine}
+      ${contentHtml}
+      <div class="post-actions">
+        ${postComments.length > 0 ? `<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">◎ ${postComments.length} comment${postComments.length!==1?'s':''}</span>` : ''}
+      </div>
+      ${postComments.length > 0 ? `<div style="margin-top:12px">${postComments.map(renderAnnotationBubble).join('')}</div>` : ''}
+    `;
+  }
+
+  return `<div class="post" id="post-${post.id}" data-post-id="${post.id}" data-conv-id="${convId}">${inner}</div>`;
+}
+
+function renderAnnotatedContent(content, annotations) {
+  let result = esc(content);
+  const used = new Set();
+  annotations.forEach(ann => {
+    if (!ann.selectedText || used.has(ann.selectedText)) return;
+    const escapedSel = esc(ann.selectedText);
+    if (result.includes(escapedSel)) {
+      result = result.replace(escapedSel, `<span class="annotated" title="Has annotation">${escapedSel}</span>`);
+      used.add(ann.selectedText);
+    }
+  });
+  return result;
+}
+
+function renderAnnotationBubble(ann) {
+  const author = DB.users.find(u => u.id === ann.authorId);
+  return `
+    <div class="annotation-bubble">
+      ${ann.selectedText ? `<div class="quoted-text">"${esc(ann.selectedText)}"</div>` : ''}
+      <div>${esc(ann.content)}</div>
+      <div class="ann-meta">${nameLink(author)} · ${timeAgo(ann.createdAt)}</div>
+    </div>
+  `;
+}
+
+function renderCommentItem(c) {
+  const author = DB.users.find(u => u.id === c.authorId);
+  return `
+    <div class="comment-item">
+      <div class="comment-meta">
+        ${nameLink(author)} · ${timeAgo(c.createdAt)}
+      </div>
+      ${c.selectedText ? `<div class="comment-quoted">"${esc(c.selectedText)}"</div>` : ''}
+      <div class="comment-content">${esc(c.content)}</div>
+    </div>
+  `;
+}
+
+// ─── TEXT SELECTION → ANNOTATION ──────────────────────────────────────────────
+
+let selectionData = null;
+let _selectionAbort = null;
+
+function setupTextSelection(convId) {
+  // Abort any prior listener so we never accumulate multiple mouseup handlers
+  if (_selectionAbort) _selectionAbort.abort();
+  _selectionAbort = new AbortController();
+  const { signal } = _selectionAbort;
+
+  const trigger = document.getElementById('annotation-trigger');
+
+  document.addEventListener('mouseup', function(e) {
+    if (currentPage !== 'conversation') { trigger.style.display = 'none'; return; }
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+      trigger.style.display = 'none'; selectionData = null; return;
+    }
+    const selectedText = sel.toString().trim();
+    if (!selectedText || selectedText.length < 2) { trigger.style.display = 'none'; return; }
+
+    let postEl = null;
+    let node = sel.anchorNode;
+    while (node) {
+      if (node.dataset && node.dataset.postId) { postEl = node; break; }
+      node = node.parentElement;
+    }
+    if (!postEl) {
+      try {
+        let container = sel.getRangeAt(0).commonAncestorContainer;
+        while (container) {
+          if (container.dataset && container.dataset.postId) { postEl = container; break; }
+          container = container.parentElement;
+        }
+      } catch(e) {}
+    }
+
+    if (!currentUser) { trigger.style.display = 'none'; return; }
+
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    trigger.style.display = 'block';
+    trigger.style.top = (window.scrollY + rect.bottom + 8) + 'px';
+    trigger.style.left = (rect.left + rect.width / 2 - 70) + 'px';
+    selectionData = { selectedText, postId: postEl ? postEl.dataset.postId : null, convId };
+  }, { signal });
+
+  trigger.onclick = () => {
+    if (!selectionData) return;
+    trigger.style.display = 'none';
+    openAnnotateModal(selectionData.postId, selectionData.convId, selectionData.selectedText);
+    window.getSelection().removeAllRanges();
+  };
+}
+
+// ─── COMMENT MODAL ────────────────────────────────────────────────────────────
+
+let commentModalData = null;
+
+function openAnnotateModal(postId, convId, selectedText) {
+  if (!currentUser) { navigate('login'); return; }
+  commentModalData = { postId, convId, selectedText };
+
+  document.getElementById('comment-modal-title').textContent =
+    postId ? (selectedText ? 'Annotate selection' : 'Comment on post') : 'Comment on conversation';
+
+  const ctx = document.getElementById('comment-context-display');
+  if (selectedText) {
+    ctx.innerHTML = `<div class="comment-context-box">"${esc(selectedText)}"</div>`;
+  } else if (postId) {
+    const post = DB.posts.find(p => p.id === postId);
+    const snippet = post ? post.content.slice(0, 100) + (post.content.length > 100 ? '…' : '') : '';
+    ctx.innerHTML = `<div class="comment-context-box" style="font-style:normal;font-size:13px">"${esc(snippet)}"</div>`;
+  } else {
+    ctx.innerHTML = '';
+  }
+
+  document.getElementById('comment-input').value = '';
+  document.getElementById('comment-modal').classList.add('open');
+  setTimeout(() => document.getElementById('comment-input').focus(), 50);
+}
+
+function closeCommentModal() {
+  document.getElementById('comment-modal').classList.remove('open');
+  commentModalData = null;
+}
+
+function submitComment() {
+  const auth = getAuthUser();
+  if (!auth || !commentModalData) return;
+  const content = document.getElementById('comment-input').value.trim();
+  if (!content) { toast('Please write a comment.'); return; }
+
+  // Save before closeCommentModal() nulls commentModalData
+  const { convId, postId, selectedText } = commentModalData;
+  const comment = { id: DB.uid(), conversationId: convId, postId: postId||null, authorId: auth.id, selectedText: selectedText||null, content, createdAt: Date.now() };
+  DB.comments.push(comment);
+  DB.save();
+  bw('POST', '/api/comments', comment);
+  closeCommentModal();
+  toast('Comment posted.');
+  renderConversation(convId);
+}
+
+// ─── SUBMIT POST ──────────────────────────────────────────────────────────────
+
+function submitPost(convId) {
+  const auth = getAuthUser();
+  if (!auth) { navigate('login'); return; }
+  const content = document.getElementById('post-compose').value.trim();
+  if (!content) { toast('Write something first.'); return; }
+
+  const conv = DB.conversations.find(c => c.id === convId);
+  if (!conv || !(conv.participants||[]).includes(auth.id)) {
+    toast('You are not a participant in this conversation.'); return;
+  }
+
+  const post = { id: DB.uid(), conversationId: convId, authorId: auth.id, content, createdAt: Date.now() };
+  DB.posts.push(post);
+  conv.lastActivity = Date.now();
+  DB.save();
+  bw('POST', '/api/posts', post);
+  toast('Contributed.');
+  renderConversation(convId);
+}
+
+// ─── CONV-LEVEL COMMENT ───────────────────────────────────────────────────────
+
+function submitConvComment(convId) {
+  const auth = getAuthUser();
+  if (!auth) { navigate('login'); return; }
+  const content = document.getElementById('conv-comment-input').value.trim();
+  if (!content) { toast('Write something first.'); return; }
+
+  const cc = { id: DB.uid(), conversationId: convId, postId: null, authorId: auth.id, selectedText: null, content, createdAt: Date.now() };
+  DB.comments.push(cc);
+  DB.save();
+  bw('POST', '/api/comments', cc);
+  toast('Comment posted.');
+  renderConversation(convId);
+}
+
+// ─── VOTING ───────────────────────────────────────────────────────────────────
+
+function voteConv(convId, type) {
+  const auth = getAuthUser();
+  if (!auth) { navigate('login'); return; }
+  const conv = DB.conversations.find(c => c.id === convId);
+  if (!conv) return;
+  conv.likes = conv.likes || []; conv.dislikes = conv.dislikes || [];
+
+  if (type === 'like') {
+    if (conv.likes.includes(auth.id)) conv.likes = conv.likes.filter(id => id !== auth.id);
+    else { conv.likes.push(auth.id); conv.dislikes = conv.dislikes.filter(id => id !== auth.id); }
+  } else {
+    if (conv.dislikes.includes(auth.id)) conv.dislikes = conv.dislikes.filter(id => id !== auth.id);
+    else { conv.dislikes.push(auth.id); conv.likes = conv.likes.filter(id => id !== auth.id); }
+  }
+  DB.save();
+  bw('POST', '/api/conversations/' + convId + '/vote', { type });
+  renderConversation(convId);
+}
+
+// ─── TITLE EDITING ────────────────────────────────────────────────────────────
+
+function setCommentView(mode, convId) { commentView = mode; renderConversation(convId); }
+
+function startEditTitle(convId) { editingTitle = true; renderConversation(convId); }
+
+function saveTitle(convId, confirm) {
+  if (!confirm) { editingTitle = false; renderConversation(convId); return; }
+  const inp = document.getElementById('title-edit-input');
+  if (!inp) return;
+  const newTitle = inp.value.trim();
+  if (!newTitle) { toast('Title cannot be empty.'); return; }
+  const auth = getAuthUser();
+  const conv = DB.conversations.find(c => c.id === convId);
+  if (!auth || !conv || conv.creatorId !== auth.id) {
+    toast('Not authorised to edit this title.'); editingTitle = false; renderConversation(convId); return;
+  }
+  conv.title = newTitle; DB.save(); bw('PATCH', '/api/conversations/' + convId, { title: newTitle }); toast('Title updated.');
+  editingTitle = false;
+  renderConversation(convId);
+}
+
+function saveCategory(convId, confirm) {
+  if (!confirm) { editingCategory = false; renderConversation(convId); return; }
+  const sel = document.getElementById('category-edit-select');
+  const newCat = sel ? sel.value : '';
+  if (!newCat) { toast('Please select a category.'); return; }
+  const auth = getAuthUser();
+  const conv = DB.conversations.find(c => c.id === convId);
+  if (!auth || !conv || conv.creatorId !== auth.id) {
+    toast('Not authorised to edit this category.'); editingCategory = false; renderConversation(convId); return;
+  }
+  conv.category = newCat; DB.save(); bw('PATCH', '/api/conversations/' + convId, { category: newCat }); toast('Category updated.');
+  editingCategory = false;
+  renderConversation(convId);
+}
+
+// ─── PARTICIPANTS ─────────────────────────────────────────────────────────────
+
+function addParticipant(convId) {
+  const inp = document.getElementById('add-participant-input');
+  const email = inp.value.trim().toLowerCase();
+  if (!email) return;
+
+  const auth = getAuthUser();
+  const conv = DB.conversations.find(c => c.id === convId);
+  if (!auth || !conv || !(conv.participants||[]).includes(auth.id)) {
+    toast('Only participants can add others.'); return;
+  }
+
+  const target = DB.users.find(u => u.email === email);
+  if (!target) {
+    // No account — send an invitation
+    const alreadyInvited = (DB.invitations||[]).find(i => i.email === email && i.convId === convId);
+    if (alreadyInvited) { toast('An invitation has already been sent to ' + email + '.'); return; }
+
+    DB.invitations = DB.invitations || [];
+    DB.invitations.push({ email, convId, invitedBy: auth.id, invitedAt: Date.now() });
+    DB.save();
+    bw('POST', '/api/conversations/' + convId + '/participants', { email });
+    inp.value = '';
+
+    // Open the user's email client with a pre-filled invitation
+    const subject = encodeURIComponent('You\'ve been invited to join a conversation on Saloon');
+    const body = encodeURIComponent(
+      'Hi,\n\n' + displayName(auth) + ' has invited you to participate in a conversation on Saloon titled "' + conv.title + '".\n\nSaloon is a platform for thoughtful long-form conversation. Create a free account — you\'ll be added to this conversation automatically when you sign up with this email address.\n\n— Saloon\n\nconversation reimagined'
+    );
+    window.open('mailto:' + email + '?subject=' + subject + '&body=' + body, '_self');
+
+    toast('Invitation sent to ' + email + '.');
+    renderConversation(convId);
+    return;
+  }
+
+  if ((conv.participants||[]).includes(target.id)) { toast(displayName(target) + ' is already a participant.'); return; }
+  conv.participants.push(target.id);
+  DB.save();
+  bw('POST', '/api/conversations/' + convId + '/participants', { email });
+  toast(displayName(target) + ' added to conversation.');
+  inp.value = '';
+  renderConversation(convId);
+}
+
+// ─── NEW CONVERSATION ─────────────────────────────────────────────────────────
+
+function openNewConvModal() {
+  if (!currentUser) { navigate('login'); return; }
+  document.getElementById('new-conv-title').value = '';
+  document.getElementById('new-conv-category').value = '';
+  document.getElementById('new-conv-body').value = '';
+  document.getElementById('new-conv-modal').classList.add('open');
+  setTimeout(() => document.getElementById('new-conv-title').focus(), 50);
+}
+
+function closeNewConvModal() { document.getElementById('new-conv-modal').classList.remove('open'); }
+
+function submitNewConversation() {
+  const auth = getAuthUser();
+  if (!auth) { navigate('login'); return; }
+  const title = document.getElementById('new-conv-title').value.trim();
+  const category = document.getElementById('new-conv-category').value;
+  const body = document.getElementById('new-conv-body').value.trim();
+  if (!title) { toast('Please give your conversation a title.'); return; }
+  if (!category) { toast('Please select a category.'); return; }
+  if (!body) { toast('Please write an opening message.'); return; }
+
+  const convId = DB.uid();
+  DB.conversations.push({
+    id: convId, title, category,
+    creatorId: auth.id,
+    participants: [auth.id],
+    createdAt: Date.now(), lastActivity: Date.now(),
+    viewCount: 0, likes: [], dislikes: []
+  });
+  const openPost = { id: DB.uid(), conversationId: convId, authorId: auth.id, content: body, createdAt: Date.now() };
+  DB.posts.push(openPost);
+  DB.save();
+  bw('POST', '/api/conversations', { title, category, content: body });
+  closeNewConvModal();
+  navigate('conversation', convId);
+  toast('Conversation started.');
+}
+
+// ─── PROFILE PAGE ────────────────────────────────────────────────────────────
+
+let profileTab = 'about';
+let editingProfile = false;
+
+// Temporary state for profile editing
+let editBio = '', editCredentials = [], editInterests = [], editBooks = [], editFilms = [];
+
+function renderProfile(userId) {
+  const user = DB.users.find(u => u.id === userId);
+  if (!user) { navigate('home'); return; }
+
+  const isOwn = currentUser && currentUser.id === userId;
+  const following = user.following || [];
+  const followers = DB.users.filter(u => (u.following||[]).includes(userId));
+  const userPosts = DB.posts.filter(p => p.authorId === userId);
+  const userConvs = [...new Set(userPosts.map(p => p.conversationId))]
+    .map(id => DB.conversations.find(c => c.id === id)).filter(Boolean);
+  const likedConvs = DB.conversations.filter(c => (c.likes||[]).includes(userId));
+  const isFollowing = currentUser && (currentUser.following||[]).includes(userId);
+
+  const tabs = ['about','posts','liked','interests','following','followers'];
+  const tabLabels = { about: 'About', posts: `Conversations (${userConvs.length})`, liked: `Liked (${likedConvs.length})`,
+    interests: 'Interests', following: `Following (${following.length})`, followers: `Followers (${followers.length})` };
+
+  const el = document.getElementById('page-profile');
+
+  let tabContent = '';
+  if (profileTab === 'about') {
+    if (editingProfile && isOwn) {
+      tabContent = renderProfileEdit(user);
+    } else {
+      const credentials = user.credentials || [];
+      tabContent = `
+        ${user.bio ? `<p style="font-size:17px;line-height:1.8;margin-bottom:20px">${esc(user.bio)}</p>` : '<p style="color:var(--muted);font-family:var(--font-ui);font-size:14px">No bio yet.</p>'}
+        ${credentials.length > 0 ? `
+          <div style="margin-top:20px">
+            <div class="profile-section-label">Credentials & Accomplishments</div>
+            <div class="profile-credentials">
+              ${credentials.map(c => `<span class="credential-chip">${esc(c)}</span>`).join('')}
+            </div>
+          </div>
+        ` : ''}
+        ${isOwn ? `<button class="btn-ghost btn-sm" style="margin-top:24px" onclick="startEditProfile('${userId}')">Edit profile</button>` : ''}
+      `;
+    }
+  } else if (profileTab === 'posts') {
+    if (userConvs.length === 0) {
+      tabContent = `<div class="empty-state" style="padding:40px 0"><div class="empty-icon">✦</div><h3>No conversations yet</h3></div>`;
+    } else {
+      tabContent = `<div class="feed">${userConvs.map(renderFeedItem).join('')}</div>`;
+    }
+  } else if (profileTab === 'liked') {
+    if (likedConvs.length === 0) {
+      tabContent = `<div class="empty-state" style="padding:40px 0"><div class="empty-icon">✦</div><h3>No liked conversations</h3></div>`;
+    } else {
+      tabContent = `<div class="feed">${likedConvs.map(renderFeedItem).join('')}</div>`;
+    }
+  } else if (profileTab === 'interests') {
+    const interests = user.interests || [];
+    const books = user.recommendedBooks || [];
+    const films = user.recommendedFilms || [];
+    tabContent = `
+      <div style="margin-bottom:32px">
+        <div class="profile-section-label">Interests</div>
+        ${interests.length > 0
+          ? `<div style="margin-top:8px">${interests.map(i => `<span class="interest-chip">${esc(i)}</span>`).join('')}</div>`
+          : `<p style="color:var(--muted);font-family:var(--font-ui);font-size:14px">No interests listed.</p>`}
+      </div>
+      <div style="margin-bottom:32px">
+        <div class="profile-section-label">Recommended Books</div>
+        ${books.length > 0
+          ? `<div>${books.map(b => `<div class="book-item"><div>${esc(b.title)}</div><div class="book-author">${esc(b.author)}</div></div>`).join('')}</div>`
+          : `<p style="color:var(--muted);font-family:var(--font-ui);font-size:14px">No books recommended yet.</p>`}
+      </div>
+      <div>
+        <div class="profile-section-label">Recommended Films</div>
+        ${films.length > 0
+          ? `<div>${films.map(f => `<div class="book-item"><div>${esc(f.title)}</div><div class="book-author">${esc(f.director)}</div></div>`).join('')}</div>`
+          : `<p style="color:var(--muted);font-family:var(--font-ui);font-size:14px">No films recommended yet.</p>`}
+      </div>
+      ${isOwn ? `<button class="btn-ghost btn-sm" style="margin-top:24px" onclick="startEditInterests('${userId}')">Edit interests</button>` : ''}
+    `;
+  } else if (profileTab === 'following') {
+    const followingUsers = following.map(id => DB.users.find(u => u.id === id)).filter(Boolean);
+    tabContent = followingUsers.length === 0
+      ? `<div class="empty-state" style="padding:40px 0"><div class="empty-icon">◎</div><h3>Not following anyone yet</h3></div>`
+      : followingUsers.map(u => renderFollowRow(u)).join('');
+  } else if (profileTab === 'followers') {
+    tabContent = followers.length === 0
+      ? `<div class="empty-state" style="padding:40px 0"><div class="empty-icon">◎</div><h3>No followers yet</h3></div>`
+      : followers.map(u => renderFollowRow(u)).join('');
+  }
+
+  el.innerHTML = `
+    <div class="container">
+      <div style="margin-bottom:20px">
+        <a href="#" onclick="navigateBack();return false" style="font-family:var(--font-ui);font-size:13px;color:var(--muted)">← Back</a>
+      </div>
+
+      <div class="profile-header">
+        <div class="profile-avatar">${esc(initials(user))}</div>
+        <div class="profile-info">
+          <div class="profile-name">${esc(displayName(user))}</div>
+          ${user.bio ? `<div class="profile-bio">${esc(user.bio.slice(0, 120))}${user.bio.length > 120 ? '…' : ''}</div>` : ''}
+          <div class="profile-stats">
+            <span><strong>${userConvs.length}</strong> conversations participated</span>
+            <span><a class="name-link" onclick="setProfileTab('followers','${userId}')"><strong>${followers.length}</strong> followers</a></span>
+            <span><a class="name-link" onclick="setProfileTab('following','${userId}')"><strong>${following.length}</strong> following</a></span>
+          </div>
+          ${!isOwn && currentUser ? `
+            <div style="margin-top:14px">
+              <button class="${isFollowing ? 'btn-ghost' : 'btn-primary'} btn-sm" onclick="toggleFollow('${userId}')">
+                ${isFollowing ? 'Unfollow' : 'Follow'}
+              </button>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+
+      <div class="profile-tabs">
+        ${tabs.map(t => `<div class="profile-tab ${profileTab===t?'active':''}" onclick="setProfileTab('${t}','${userId}')">${tabLabels[t]}</div>`).join('')}
+      </div>
+
+      <div id="profile-tab-content">
+        ${tabContent}
+      </div>
+    </div>
+  `;
+}
+
+function renderFollowRow(user) {
+  return `
+    <div class="follow-row">
+      <div class="follow-avatar">${esc(initials(user))}</div>
+      <div class="follow-info">
+        <div class="follow-name" onclick="navigate('profile','${user.id}')">${esc(displayName(user))}</div>
+        ${user.bio ? `<div class="follow-bio">${esc(user.bio.slice(0, 80))}${user.bio.length > 80 ? '…' : ''}</div>` : ''}
+      </div>
+      ${currentUser && currentUser.id !== user.id ? `
+        <button class="${(currentUser.following||[]).includes(user.id)?'btn-ghost':'btn-primary'} btn-sm"
+          onclick="toggleFollow('${user.id}')">
+          ${(currentUser.following||[]).includes(user.id) ? 'Unfollow' : 'Follow'}
+        </button>
+      ` : ''}
+    </div>
+  `;
+}
+
+function setProfileTab(tab, userId) {
+  profileTab = tab;
+  editingProfile = false;
+  renderProfile(userId);
+}
+
+// ─── FOLLOW ───────────────────────────────────────────────────────────────────
+
+function toggleFollow(targetId) {
+  const auth = getAuthUser();
+  if (!auth) { navigate('login'); return; }
+  if (auth.id === targetId) return;
+  auth.following = auth.following || [];
+  const idx = auth.following.indexOf(targetId);
+  const target = DB.users.find(u => u.id === targetId);
+  if (idx > -1) {
+    auth.following.splice(idx, 1);
+    toast('Unfollowed ' + displayName(target) + '.');
+  } else {
+    auth.following.push(targetId);
+    toast('Now following ' + displayName(target) + '.');
+  }
+  currentUser = auth; // keep UI reference in sync
+  DB.save();
+  bw('POST', '/api/users/' + targetId + '/follow', {});
+  if (currentPage === 'profile') renderProfile(currentConvId);
+}
+
+// ─── PROFILE EDITING ──────────────────────────────────────────────────────────
+
+function startEditProfile(userId) {
+  const user = DB.users.find(u => u.id === userId);
+  if (!user) return;
+  editBio = user.bio || '';
+  editCredentials = [...(user.credentials || [])];
+  editingProfile = true;
+  profileTab = 'about';
+  renderProfile(userId);
+}
+
+function renderProfileEdit(user) {
+  return `
+    <div>
+      <div class="form-group">
+        <label>Bio</label>
+        <textarea id="edit-bio" rows="4" placeholder="Tell people about yourself…">${esc(editBio)}</textarea>
+      </div>
+      <div class="form-group">
+        <label>Credentials & Accomplishments</label>
+        <div class="tag-list" id="cred-list">
+          ${editCredentials.map((c,i) => `
+            <span class="tag-item">${esc(c)}
+              <button class="tag-remove" onclick="removeCredential(${i},'${user.id}')">×</button>
+            </span>`).join('')}
+        </div>
+        <div class="edit-tag-row">
+          <input type="text" id="cred-input" placeholder="e.g. PhD Philosophy, Oxford" onkeydown="if(event.key==='Enter'){addCredential('${user.id}');event.preventDefault()}">
+          <button class="btn-ghost btn-sm" onclick="addCredential('${user.id}')">Add</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn-primary btn-sm" onclick="saveProfile('${user.id}')">Save</button>
+        <button class="btn-ghost btn-sm" onclick="cancelEditProfile('${user.id}')">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
+function addCredential(userId) {
+  const inp = document.getElementById('cred-input');
+  const val = inp.value.trim();
+  if (!val) return;
+  editCredentials.push(val);
+  inp.value = '';
+  renderProfile(userId);
+}
+function removeCredential(i, userId) {
+  editCredentials.splice(i, 1);
+  renderProfile(userId);
+}
+
+function startEditInterests(userId) {
+  const user = DB.users.find(u => u.id === userId);
+  if (!user) return;
+  editInterests = [...(user.interests || [])];
+  editBooks = [...(user.recommendedBooks || [])];
+  editFilms = [...(user.recommendedFilms || [])];
+  profileTab = 'interests';
+  document.getElementById('profile-tab-content').innerHTML = renderInterestsEdit(userId);
+}
+
+function renderInterestsEdit(userId) {
+  return `
+    <div>
+      <div class="form-group">
+        <label>Interests</label>
+        <div class="tag-list">
+          ${editInterests.map((t,i) => `
+            <span class="tag-item">${esc(t)}
+              <button class="tag-remove" onclick="removeInterest(${i},'${userId}')">×</button>
+            </span>`).join('')}
+        </div>
+        <div class="edit-tag-row">
+          <input type="text" id="interest-input" placeholder="e.g. Constitutional law, Stoicism…" onkeydown="if(event.key==='Enter'){addInterest('${userId}');event.preventDefault()}">
+          <button class="btn-ghost btn-sm" onclick="addInterest('${userId}')">Add</button>
+        </div>
+      </div>
+      <div class="form-group" style="margin-top:24px">
+        <label>Recommended Books</label>
+        <div id="book-list">
+          ${editBooks.map((b,i) => `
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+              <div style="flex:1;font-size:14px">${esc(b.title)} <span style="color:var(--muted)">by ${esc(b.author)}</span></div>
+              <button class="tag-remove" style="color:var(--danger)" onclick="removeBook(${i},'${userId}')">×</button>
+            </div>`).join('')}
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <input type="text" id="book-title-input" placeholder="Title" style="flex:2">
+          <input type="text" id="book-author-input" placeholder="Author" style="flex:1">
+          <button class="btn-ghost btn-sm" onclick="addBook('${userId}')">Add</button>
+        </div>
+      </div>
+      <div class="form-group" style="margin-top:24px">
+        <label>Recommended Films</label>
+        <div id="film-list">
+          ${editFilms.map((f,i) => `
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">
+              <div style="flex:1;font-size:14px">${esc(f.title)} <span style="color:var(--muted)">dir. ${esc(f.director)}</span></div>
+              <button class="tag-remove" style="color:var(--danger)" onclick="removeFilm(${i},'${userId}')">×</button>
+            </div>`).join('')}
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <input type="text" id="film-title-input" placeholder="Title" style="flex:2">
+          <input type="text" id="film-dir-input" placeholder="Director" style="flex:1">
+          <button class="btn-ghost btn-sm" onclick="addFilm('${userId}')">Add</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:20px">
+        <button class="btn-primary btn-sm" onclick="saveInterests('${userId}')">Save</button>
+        <button class="btn-ghost btn-sm" onclick="setProfileTab('interests','${userId}')">Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
+function addInterest(userId) {
+  const inp = document.getElementById('interest-input');
+  const val = inp.value.trim(); if (!val) return;
+  editInterests.push(val); inp.value = '';
+  document.getElementById('profile-tab-content').innerHTML = renderInterestsEdit(userId);
+}
+function removeInterest(i, userId) {
+  editInterests.splice(i, 1);
+  document.getElementById('profile-tab-content').innerHTML = renderInterestsEdit(userId);
+}
+function addBook(userId) {
+  const t = document.getElementById('book-title-input').value.trim();
+  const a = document.getElementById('book-author-input').value.trim();
+  if (!t) return;
+  editBooks.push({ title: t, author: a });
+  document.getElementById('profile-tab-content').innerHTML = renderInterestsEdit(userId);
+}
+function removeBook(i, userId) {
+  editBooks.splice(i, 1);
+  document.getElementById('profile-tab-content').innerHTML = renderInterestsEdit(userId);
+}
+function addFilm(userId) {
+  const t = document.getElementById('film-title-input').value.trim();
+  const d = document.getElementById('film-dir-input').value.trim();
+  if (!t) return;
+  editFilms.push({ title: t, director: d });
+  document.getElementById('profile-tab-content').innerHTML = renderInterestsEdit(userId);
+}
+function removeFilm(i, userId) {
+  editFilms.splice(i, 1);
+  document.getElementById('profile-tab-content').innerHTML = renderInterestsEdit(userId);
+}
+function saveInterests(userId) {
+  const auth = getAuthUser();
+  if (!auth || auth.id !== userId) { toast('Not authorised.'); return; }
+  const user = DB.users.find(u => u.id === userId);
+  if (!user) return;
+  user.interests = [...editInterests];
+  user.recommendedBooks = [...editBooks];
+  user.recommendedFilms = [...editFilms];
+  DB.save();
+  toast('Interests updated.');
+  setProfileTab('interests', userId);
+}
+
+function saveProfile(userId) {
+  const auth = getAuthUser();
+  const user = DB.users.find(u => u.id === userId);
+  if (!auth || !user || auth.id !== userId) { toast('Not authorised.'); return; }
+  const bioEl = document.getElementById('edit-bio');
+  if (bioEl) editBio = bioEl.value.trim();
+  user.bio = editBio;
+  user.credentials = [...editCredentials];
+  DB.save();
+  bw('PATCH', '/api/users/' + userId, { bio: user.bio, credentials: user.credentials });
+  toast('Profile saved.');
+  editingProfile = false;
+  renderProfile(userId);
+}
+
+function cancelEditProfile(userId) {
+  editingProfile = false;
+  renderProfile(userId);
+}
+
+// ─── UTILITIES ────────────────────────────────────────────────────────────────
+
+const _escMap = { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;' };
+function esc(str) {
+  if (!str) return '';
+  return String(str).replace(/[&<>"']/g, c => _escMap[c]);
+}
+
+function timeAgo(ts) {
+  const diff = Date.now() - ts;
+  const m = Math.floor(diff / 60000), h = Math.floor(diff / 3600000), d = Math.floor(diff / 86400000);
+  if (m < 1) return 'just now';
+  if (m < 60) return m + 'm ago';
+  if (h < 24) return h + 'h ago';
+  if (d < 30) return d + 'd ago';
+  return new Date(ts).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'});
+}
+
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
+}
+
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay) { overlay.classList.remove('open'); commentModalData = null; }
+  });
+});
+
+window.addEventListener('scroll', () => {
+  document.getElementById('annotation-trigger').style.display = 'none';
+  selectionData = null;
+});
+
+// ─── SEED DATA ────────────────────────────────────────────────────────────────
+
+function seedData() {
+  if (DB.conversations.length > 0) return;
+
+  const pw = hashPassword('password');
+  const alice = {
+    id: 'u1', firstName: 'Alice', lastName: 'Monroe', email: 'alice@saloon.io',
+    passwordHash: pw, idFile: 'demo', idFileName: 'id.png', verified: true,
+    createdAt: Date.now() - 86400000 * 5,
+    bio: 'Literary critic and independent scholar. Interested in the phenomenology of reading and the social life of texts.',
+    credentials: ['MA Comparative Literature, Yale', 'Contributing editor, The Point'],
+    interests: ['Literary theory', 'Phenomenology', 'Slow reading', 'Essay form', 'Philosophy of mind'],
+    recommendedBooks: [
+      { title: 'How to Read a Book', author: 'Mortimer Adler' },
+      { title: 'The Pleasures of Reading in an Age of Distraction', author: 'Alan Jacobs' },
+      { title: 'Metaphors We Live By', author: 'Lakoff & Johnson' }
+    ],
+    recommendedFilms: [
+      { title: 'My Dinner with Andre', director: 'Louis Malle' },
+      { title: 'The Mirror', director: 'Andrei Tarkovsky' }
+    ],
+    following: ['u2', 'u3']
+  };
+  const bob = {
+    id: 'u2', firstName: 'Bob', lastName: 'Harlan', email: 'bob@saloon.io',
+    passwordHash: pw, idFile: 'demo', idFileName: 'id.png', verified: true,
+    createdAt: Date.now() - 86400000 * 4,
+    bio: 'Historian of ideas with a focus on media and communication technology. Skeptic of golden-age narratives.',
+    credentials: ['PhD History, Columbia', 'Author of "The Pamphlet and the Press"'],
+    interests: ['History of media', 'Political communication', '18th century', 'Rhetoric', 'Technology & society'],
+    recommendedBooks: [
+      { title: 'Manufacturing Consent', author: 'Chomsky & Herman' },
+      { title: 'The Shallows', author: 'Nicholas Carr' },
+      { title: 'Amusing Ourselves to Death', author: 'Neil Postman' }
+    ],
+    recommendedFilms: [
+      { title: 'Network', director: 'Sidney Lumet' },
+      { title: 'All the President\'s Men', director: 'Alan J. Pakula' }
+    ],
+    following: ['u1', 'u3']
+  };
+  const cara = {
+    id: 'u3', firstName: 'Cara', lastName: 'Voss', email: 'cara@saloon.io',
+    passwordHash: pw, idFile: 'demo', idFileName: 'id.png', verified: true,
+    createdAt: Date.now() - 86400000 * 3,
+    bio: 'Practicing attorney and legal theorist. I write on the intersection of natural law, constitutional theory, and political philosophy.',
+    credentials: ['JD, Harvard Law', 'LLM Jurisprudence, Oxford', 'Clerk, First Circuit Court of Appeals'],
+    interests: ['Natural law', 'Constitutional theory', 'Jurisprudence', 'Epistolary tradition', 'Moral philosophy'],
+    recommendedBooks: [
+      { title: 'Law\'s Empire', author: 'Ronald Dworkin' },
+      { title: 'The Morality of Law', author: 'Lon Fuller' },
+      { title: 'Letters to a Young Lawyer', author: 'Alan Dershowitz' }
+    ],
+    recommendedFilms: [
+      { title: 'Judgment at Nuremberg', director: 'Stanley Kramer' },
+      { title: 'Twelve Angry Men', director: 'Sidney Lumet' }
+    ],
+    following: ['u1']
+  };
+  DB.users.push(alice, bob, cara);
+
+  const c1='c1', c2='c2', c3='c3', c4='c4';
+  DB.conversations.push(
+    { id: c1, title: 'On the nature of slow reading', category: 'Psychology', creatorId: 'u1', participants: ['u1','u2'], createdAt: Date.now()-86400000*4, lastActivity: Date.now()-3600000*2, viewCount: 41, likes: ['u2','u3'], dislikes: [] },
+    { id: c2, title: 'Is online discourse actually getting worse, or do we just remember the past better?', category: 'Politics', creatorId: 'u2', participants: ['u2','u3'], createdAt: Date.now()-86400000*2, lastActivity: Date.now()-3600000*5, viewCount: 87, likes: ['u1','u2','u3'], dislikes: [] },
+    { id: c3, title: 'The case for long-form letters as a communication medium', category: 'Culture', creatorId: 'u3', participants: ['u3'], createdAt: Date.now()-3600000*10, lastActivity: Date.now()-3600000*1, viewCount: 12, likes: ['u1'], dislikes: ['u2'] },
+    { id: c4, title: 'Does natural law still have a place in modern jurisprudence?', category: 'Law', creatorId: 'u1', participants: ['u1','u3'], createdAt: Date.now()-86400000*1, lastActivity: Date.now()-3600000*3, viewCount: 28, likes: ['u2','u3'], dislikes: [] }
+  );
+
+  DB.posts.push(
+    { id: 'p1', conversationId: c1, authorId: 'u1', content: "I've been thinking about what it means to read slowly — not just carefully, but without urgency. There is a particular texture to reading a page without wondering what comes next, without the background hum of everything else you haven't read yet.\n\nSlow reading might be the last genuinely counter-cultural act available to most people. It requires not just time, but the willingness to let time pass without accounting for it.", createdAt: Date.now()-86400000*4 },
+    { id: 'p2', conversationId: c1, authorId: 'u2', content: "There's something to this, though I'd distinguish slow reading from rereading. Rereading is its own pleasure — the comfort of the known, the discovery of what you missed. Slow reading, as you describe it, is an encounter with the text on its own terms, without the forward momentum that narrative usually demands.\n\nI wonder if certain genres resist slow reading more than others. Thrillers seem structurally opposed to it.", createdAt: Date.now()-86400000*3 },
+    { id: 'p3', conversationId: c1, authorId: 'u1', content: "Yes — and perhaps that's the point of a thriller. It colonizes your attention, makes the idea of slowing down feel like a kind of failure. But essays resist this completely. You can stop in the middle of a sentence, go for a walk, and come back to it.", createdAt: Date.now()-3600000*2 },
+    { id: 'p4', conversationId: c2, authorId: 'u2', content: "The conventional wisdom is that social media ruined discourse — that once we had thoughtful letters and now we have reply-guy culture. But I'm skeptical of this narrative.\n\nPamphlet wars in the 18th century were vicious. Newspapers in the 19th century were openly partisan. The golden age of civil public discourse may simply be a story we tell ourselves.", createdAt: Date.now()-86400000*2 },
+    { id: 'p5', conversationId: c2, authorId: 'u3', content: "You're right that the past wasn't civil, but I think you might be conflating different things. The viciousness of pamphlets was constrained by production and distribution costs. Today, the feedback loop between expression and reaction is essentially instantaneous and free.\n\nThat changes the psychology of participation, not just the tone.", createdAt: Date.now()-86400000*1 },
+    { id: 'p6', conversationId: c3, authorId: 'u3', content: "A letter forces a particular kind of thought. Because you cannot receive a response immediately, you must anticipate objections, supply your own counterarguments, and write something robust enough to stand alone until a reply arrives — possibly days or weeks later.\n\nThis constraint produces a different relationship with your own ideas. You commit to them. You become responsible for them in a way that asynchronous replies on a feed do not require.", createdAt: Date.now()-3600000*10 },
+    { id: 'p7', conversationId: c4, authorId: 'u1', content: "The positivist revolution in jurisprudence was supposed to have settled this: law is what is enacted, not what is moral. Yet natural law keeps returning — in constitutional reasoning, in human rights discourse, in arguments about unjust laws and civil disobedience.\n\nIs this a category error, or does it reveal something real about the relationship between law and morality that positivism can't fully suppress?", createdAt: Date.now()-86400000*1 },
+    { id: 'p8', conversationId: c4, authorId: 'u3', content: "I think positivism won the academic debate but lost the practitioner's courtroom. Judges regularly invoke principles that aren't in any statute — proportionality, reasonableness, legitimate expectation. Whether you call those natural law or 'general principles' is mostly semantic.\n\nThe question isn't whether extra-statutory reasoning exists; it obviously does. The question is whether we should be honest about what we're doing.", createdAt: Date.now()-3600000*3 }
+  );
+
+  DB.comments.push(
+    { id: 'cm1', conversationId: c1, postId: 'p1', authorId: 'u3', selectedText: 'the willingness to let time pass without accounting for it', content: "This phrase is doing real work. It's also a description of meditation, or of any craft practice. The unwillingness to let time pass unaccounted is maybe the defining anxiety of contemporary life.", createdAt: Date.now()-86400000*3 },
+    { id: 'cm2', conversationId: c2, postId: null, authorId: 'u1', selectedText: null, content: "I think both of you are right but talking past each other slightly. The question isn't whether discourse was ever civil — it wasn't — but whether the present mechanisms make improvement possible or structurally impossible.", createdAt: Date.now()-3600000*5 }
+  );
+
+  DB.save();
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+
+DB.load();
+seedData();
+async function resendVerificationTo(email) {
+  await apiCall('POST', '/api/auth/resend-verification', { email }).catch(() => {});
+  toast('Verification email resent — check your inbox.');
+}
+
+// Handle ?verify= and ?reset= query params before normal routing
+(async function handleUrlTokens() {
+  const params = new URLSearchParams(location.search);
+  const verifyToken = params.get('verify');
+  const resetToken  = params.get('reset');
+
+  if (verifyToken && BACKEND_URL) {
+    history.replaceState(null, '', location.pathname + location.hash);
+    try {
+      const res = await apiCall('POST', '/api/auth/verify-email', { token: verifyToken });
+      currentUser = res.user;
+      localStorage.setItem('saloon_session', res.user.id);
+      localStorage.setItem('saloon_jwt', res.token);
+      const idx = DB.users.findIndex(u => u.id === res.user.id);
+      if (idx >= 0) DB.users[idx] = res.user; else DB.users.push(res.user);
+      DB.save();
+      loadSession();
+      renderNav();
+      navigate('home');
+      toast('Email verified! Welcome to Saloon, ' + displayName(currentUser) + '.');
+    } catch(e) {
+      navigate('login');
+      toast('Verification link is invalid or expired. Please request a new one.');
+    }
+    return;
+  }
+
+  if (resetToken && BACKEND_URL) {
+    history.replaceState(null, '', location.pathname + location.hash);
+    loadSession(); renderNav();
+    // Show reset page with token stored in closure
+    ['home','login','register','conversation','profile','reset'].forEach(p => {
+      document.getElementById('page-' + p).style.display = 'none';
+    });
+    document.getElementById('page-reset').style.display = '';
+    renderResetPassword(resetToken);
+    return;
+  }
+
+  loadSession();
+  renderNav();
+  const _init = parseHash();
+  navigate(_init.page, _init.id);
+
+  if (BACKEND_URL) {
+    backendInit().then(() => {
+      loadSession();
+      renderNav();
+      renderPage(currentPage, currentConvId);
+    });
+  }
+})();
+</script>
+</body>
+</html>
