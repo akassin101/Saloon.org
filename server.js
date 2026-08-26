@@ -506,9 +506,8 @@ app.listen(PORT, () => {
   console.log('  To connect the frontend, open commons.html and set:');
   console.log('    const BACKEND_URL = \'http://localhost:' + PORT + '\';');
   console.log('');
-  if (SECRET === 'saloon-dev-secret-change-in-production') {
-    console.log('  ⚠️  WARNING: Using default JWT secret. Set JWT_SECRET env var before deploying.');
-    console.log('     e.g.  JWT_SECRET=$(openssl rand -hex 32) node server.js');
-    console.log('');
-  }
+  console.log('  JWT_SECRET set:', SECRET !== 'saloon-dev-secret-change-in-production');
+  console.log('  SMTP_HOST:', process.env.SMTP_HOST || '(not set)');
+  console.log('  FROM_EMAIL:', process.env.FROM_EMAIL || '(not set)');
+  console.log('');
 });
