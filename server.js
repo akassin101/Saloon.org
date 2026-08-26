@@ -27,7 +27,7 @@ const jwt        = require('jsonwebtoken');
 const bcrypt     = require('bcryptjs');
 const fs         = require('fs');
 const path       = require('path');
-const nodemailer = require('nodemailer');
+const https      = require('https');
 const crypto     = require('crypto');
 
 const helmet    = require('helmet');
@@ -54,23 +54,39 @@ const FROM_EMAIL  = process.env.FROM_EMAIL || 'noreply@saloon.org';
 
 // ─── EMAIL ─────────────────────────────────────────────────────────────────────
 
-const strip = v => v ? v.replace(/^["']|["']$/g, '') : v;
-const mailer = nodemailer.createTransport({
-  host:   strip(process.env.SMTP_HOST),
-  port:   Number(strip(process.env.SMTP_PORT)) || 587,
-  secure: strip(process.env.SMTP_SECURE) === 'true',
-  auth: {
-    user: strip(process.env.SMTP_USER),
-    pass: strip(process.env.SMTP_PASS),
-  }
-});
+const RESEND_KEY = process.env.RESEND_API_KEY;
 
 async function sendMail(to, subject, html) {
-  if (!process.env.SMTP_HOST) {
+  if (!RESEND_KEY) {
     console.log(`[email] To: ${to}\nSubject: ${subject}\n${html.replace(/<[^>]+>/g,'')}`);
     return;
   }
-  await mailer.sendMail({ from: FROM_EMAIL, to, subject, html });
+  const body = JSON.stringify({ from: FROM_EMAIL, to, subject, html });
+  await new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'api.resend.com',
+      path: '/emails',
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${RESEND_KEY}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+      }
+    }, res => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve();
+        } else {
+          reject(new Error(`Resend API ${res.statusCode}: ${data}`));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
 }
 
 // ─── PERSISTENCE ──────────────────────────────────────────────────────────────
@@ -509,7 +525,7 @@ app.listen(PORT, () => {
   console.log('    const BACKEND_URL = \'http://localhost:' + PORT + '\';');
   console.log('');
   console.log('  JWT_SECRET set:', SECRET !== 'saloon-dev-secret-change-in-production');
-  console.log('  SMTP_HOST:', process.env.SMTP_HOST || '(not set)');
-  console.log('  FROM_EMAIL:', process.env.FROM_EMAIL || '(not set)');
+  console.log('  RESEND_API_KEY set:', !!RESEND_KEY);
+  console.log('  FROM_EMAIL:', FROM_EMAIL);
   console.log('');
 });
