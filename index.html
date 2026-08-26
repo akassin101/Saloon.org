@@ -1849,7 +1849,6 @@ function renderConversation(id) {
         <div class="conv-title-wrap">
           ${editingTitle && isCreator
             ? `<input class="conv-title-input" id="title-edit-input" value="${esc(conv.title)}"
-                onblur="saveTitle('${id}',false)"
                 onkeydown="if(event.key==='Enter')saveTitle('${id}',true);if(event.key==='Escape'){editingTitle=false;renderConversation('${id}')}">
                <button class="btn-primary btn-sm" onclick="saveTitle('${id}',true)" style="margin-top:6px;flex-shrink:0">Save</button>`
             : `<h1 class="conv-title">${esc(conv.title)}</h1>
