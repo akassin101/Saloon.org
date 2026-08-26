@@ -444,7 +444,9 @@ app.patch('/api/users/:id', requireAuth, (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found.' });
   if (req.body.bio && req.body.bio.length > 1000)
     return res.status(400).json({ error: 'Bio too long (max 1 000 chars).' });
-  const allowed = ['bio', 'credentials', 'interests', 'recommendedBooks', 'recommendedFilms'];
+  if (req.body.photo !== undefined && typeof req.body.photo === 'string' && req.body.photo.length > 5 * 1024 * 1024)
+    return res.status(400).json({ error: 'Photo too large (max 5 MB).' });
+  const allowed = ['bio', 'credentials', 'interests', 'recommendedBooks', 'recommendedFilms', 'photo'];
   allowed.forEach(k => { if (req.body[k] !== undefined) user[k] = req.body[k]; });
   saveDB();
   res.json(pub(user));

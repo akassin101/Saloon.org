@@ -215,7 +215,7 @@
   /* FEED */
   .feed { display: flex; flex-direction: column; gap: 1px; }
   .feed-item {
-    background: var(--surface);
+    background: #ffffff;
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 20px 24px;
@@ -680,7 +680,28 @@
     justify-content: center;
     flex-shrink: 0;
     border: 2px solid var(--border);
+    overflow: hidden;
+    position: relative;
   }
+  .profile-avatar img {
+    width: 100%; height: 100%; object-fit: cover; border-radius: 50%;
+  }
+  .profile-avatar.clickable { cursor: pointer; }
+  .profile-avatar.clickable:hover::after {
+    content: '📷';
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.45);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; border-radius: 50%;
+  }
+  #photo-lightbox {
+    display: none; position: fixed; inset: 0; z-index: 9999;
+    background: rgba(0,0,0,0.8);
+    align-items: center; justify-content: center;
+    cursor: zoom-out;
+  }
+  #photo-lightbox.open { display: flex; }
+  #photo-lightbox img { max-width: 80vw; max-height: 80vh; border-radius: 8px; }
   .profile-info { flex: 1; min-width: 0; }
   .profile-name {
     font-size: 26px;
@@ -938,6 +959,8 @@
 </div>
 
 <div id="toast"></div>
+<div id="photo-lightbox" onclick="closeLightbox()"><img id="photo-lightbox-img" src="" alt="Profile photo"></div>
+<input type="file" id="profile-photo-input" accept="image/*" style="display:none" onchange="handleProfilePhotoUpload(event)">
 
 <script>
 'use strict';
@@ -1560,6 +1583,10 @@ function renderRegister() {
           <input type="password" id="reg-password" placeholder="at least 6 characters" autocomplete="new-password">
         </div>
         <div class="form-group">
+          <label>Confirm password</label>
+          <input type="password" id="reg-password2" placeholder="repeat password" autocomplete="new-password">
+        </div>
+        <div class="form-group">
           <label>Photo ID <span style="text-transform:none;letter-spacing:0;font-size:12px;color:var(--muted)">(government or student ID required)</span></label>
           <div class="id-upload-area" id="id-upload-area" onclick="document.getElementById('id-file-input').click()">
             <input type="file" id="id-file-input" accept="image/*,.pdf" onchange="handleIdUpload(event)">
@@ -1595,6 +1622,7 @@ async function doRegister() {
   const lastName = document.getElementById('reg-lastname').value.trim();
   const email = document.getElementById('reg-email').value.trim();
   const password = document.getElementById('reg-password').value;
+  const password2 = document.getElementById('reg-password2').value;
   const errEl = document.getElementById('reg-error');
   const btn = document.querySelector('#page-register .btn-primary');
 
@@ -1604,6 +1632,7 @@ async function doRegister() {
     if (!lastName)  { errEl.textContent = 'Please enter your last name.';  errEl.style.display = ''; return; }
     if (!email || !email.includes('@')) { errEl.textContent = 'Please enter a valid email.'; errEl.style.display = ''; return; }
     if (password.length < 6) { errEl.textContent = 'Password must be at least 6 characters.'; errEl.style.display = ''; return; }
+    if (password !== password2) { errEl.textContent = 'Passwords do not match.'; errEl.style.display = ''; return; }
     if (!pendingIdFile) { errEl.textContent = 'Please upload a valid photo ID.'; errEl.style.display = ''; return; }
     if (btn) btn.disabled = true;
     try {
@@ -2269,7 +2298,9 @@ function renderProfile(userId) {
       </div>
 
       <div class="profile-header">
-        <div class="profile-avatar">${esc(initials(user))}</div>
+        <div class="profile-avatar clickable" onclick="${isOwn ? 'document.getElementById(\'profile-photo-input\').click()' : (user.photo ? `openLightbox('${user.id}')` : '')}">
+          ${user.photo ? `<img src="${user.photo}" alt="Profile photo">` : esc(initials(user))}
+        </div>
         <div class="profile-info">
           <div class="profile-name">${esc(displayName(user))}</div>
           ${user.bio ? `<div class="profile-bio">${esc(user.bio.slice(0, 120))}${user.bio.length > 120 ? '…' : ''}</div>` : ''}
@@ -2302,7 +2333,7 @@ function renderProfile(userId) {
 function renderFollowRow(user) {
   return `
     <div class="follow-row">
-      <div class="follow-avatar">${esc(initials(user))}</div>
+      <div class="follow-avatar">${user.photo ? `<img src="${user.photo}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">` : esc(initials(user))}</div>
       <div class="follow-info">
         <div class="follow-name" onclick="navigate('profile','${user.id}')">${esc(displayName(user))}</div>
         ${user.bio ? `<div class="follow-bio">${esc(user.bio.slice(0, 80))}${user.bio.length > 80 ? '…' : ''}</div>` : ''}
@@ -2321,6 +2352,39 @@ function setProfileTab(tab, userId) {
   profileTab = tab;
   editingProfile = false;
   renderProfile(userId);
+}
+
+function handleProfilePhotoUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (file.size > 5 * 1024 * 1024) { toast('Photo must be under 5 MB.'); return; }
+  const reader = new FileReader();
+  reader.onload = async ev => {
+    const photo = ev.target.result;
+    try {
+      const updated = await apiCall('PATCH', `/api/users/${currentUser.id}`, { photo });
+      currentUser.photo = updated.photo;
+      const idx = DB.users.findIndex(u => u.id === currentUser.id);
+      if (idx >= 0) DB.users[idx] = { ...DB.users[idx], photo: updated.photo };
+      DB.save();
+      renderProfile(currentUser.id);
+      toast('Profile photo updated.');
+    } catch { toast('Failed to save photo.'); }
+  };
+  reader.readAsDataURL(file);
+  e.target.value = '';
+}
+
+function openLightbox(userId) {
+  const user = DB.users.find(u => u.id === userId);
+  if (!user || !user.photo) return;
+  document.getElementById('photo-lightbox-img').src = user.photo;
+  document.getElementById('photo-lightbox').classList.add('open');
+}
+
+function closeLightbox() {
+  document.getElementById('photo-lightbox').classList.remove('open');
+  document.getElementById('photo-lightbox-img').src = '';
 }
 
 // ─── FOLLOW ───────────────────────────────────────────────────────────────────
