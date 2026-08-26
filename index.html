@@ -2768,14 +2768,26 @@ async function resendVerificationTo(email) {
   loadSession();
   renderNav();
   const _init = parseHash();
-  navigate(_init.page, _init.id);
 
   if (BACKEND_URL) {
+    // Show a brief loading state so stale localStorage data never flashes
+    if (_init.page === 'home') {
+      document.getElementById('page-home').innerHTML =
+        '<div style="padding:60px 0;text-align:center;color:var(--muted);font-family:var(--font-ui);font-size:14px">Loading…</div>';
+      ['home','login','register','reset','conversation','profile'].forEach(p => {
+        const el = document.getElementById('page-' + p);
+        if (el) el.style.display = p === 'home' ? '' : 'none';
+      });
+    } else {
+      navigate(_init.page, _init.id);
+    }
     backendInit().then(() => {
       loadSession();
       renderNav();
-      renderPage(currentPage, currentConvId);
+      navigate(_init.page, _init.id);
     });
+  } else {
+    navigate(_init.page, _init.id);
   }
 })();
 </script>
