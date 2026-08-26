@@ -121,7 +121,7 @@ function uid() {
 // ─── MIDDLEWARE ───────────────────────────────────────────────────────────────
 
 app.use(cors({ origin: ORIGIN }));
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '10mb' }));
 
 // Serve the frontend file from the parent directory
 app.use(express.static(path.join(__dirname, '..')));
