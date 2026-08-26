@@ -515,6 +515,14 @@ app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+app.delete('/api/admin/reset-content', requireAdmin, (req, res) => {
+  db.conversations = [];
+  db.posts = [];
+  db.comments = [];
+  saveDB();
+  res.json({ ok: true, message: 'All conversations, posts, and comments deleted.' });
+});
+
 // ─── START ────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
