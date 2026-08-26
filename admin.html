@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Saloon Admin</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0f0f0f; color: #e0e0e0; min-height: 100vh; }
+  #login { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  #login form { background: #1a1a1a; padding: 2rem; border-radius: 12px; width: 320px; }
+  #login h1 { margin-bottom: 1.5rem; font-size: 1.4rem; color: #fff; }
+  input[type=password] { width: 100%; padding: .75rem; border: 1px solid #333; border-radius: 8px; background: #111; color: #fff; font-size: 1rem; margin-bottom: 1rem; }
+  button { width: 100%; padding: .75rem; background: #c8a45a; color: #000; font-weight: 700; border: none; border-radius: 8px; cursor: pointer; font-size: 1rem; }
+  button:hover { background: #e0bc6a; }
+  #err { color: #f87171; margin-top: .75rem; font-size: .875rem; }
+  #app { display: none; padding: 2rem; max-width: 1000px; margin: 0 auto; }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2rem; }
+  header h1 { font-size: 1.5rem; color: #c8a45a; }
+  #logout { width: auto; padding: .5rem 1.25rem; font-size: .875rem; }
+  .tabs { display: flex; gap: .5rem; margin-bottom: 1.5rem; }
+  .tab { padding: .5rem 1rem; border-radius: 8px; border: 1px solid #333; background: transparent; color: #aaa; cursor: pointer; font-size: .875rem; }
+  .tab.active { background: #c8a45a; color: #000; border-color: #c8a45a; font-weight: 600; }
+  .card { background: #1a1a1a; border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: .75rem; display: flex; align-items: center; gap: 1rem; }
+  .card-info { flex: 1; }
+  .card-info .name { font-weight: 600; color: #fff; }
+  .card-info .meta { font-size: .8rem; color: #888; margin-top: .2rem; }
+  .badge { font-size: .7rem; padding: .2rem .6rem; border-radius: 100px; font-weight: 600; margin-left: .5rem; }
+  .badge-pending { background: #854d0e; color: #fde68a; }
+  .badge-verified { background: #14532d; color: #86efac; }
+  .badge-rejected { background: #7f1d1d; color: #fca5a5; }
+  .card-actions { display: flex; gap: .5rem; }
+  .btn-sm { padding: .4rem .9rem; font-size: .8rem; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; }
+  .btn-verify { background: #22c55e; color: #000; }
+  .btn-verify:hover { background: #4ade80; }
+  .btn-reject { background: #ef4444; color: #fff; }
+  .btn-reject:hover { background: #f87171; }
+  .btn-delete { background: #333; color: #aaa; }
+  .btn-delete:hover { background: #444; color: #fff; }
+  #search { width: 100%; padding: .65rem 1rem; background: #1a1a1a; border: 1px solid #333; border-radius: 8px; color: #fff; font-size: .9rem; margin-bottom: 1rem; }
+  .empty { text-align: center; color: #555; padding: 3rem 0; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; margin-bottom: 1.5rem; }
+  .stat { background: #1a1a1a; border-radius: 10px; padding: 1rem; text-align: center; }
+  .stat-num { font-size: 1.8rem; font-weight: 700; color: #c8a45a; }
+  .stat-label { font-size: .8rem; color: #888; margin-top: .25rem; }
+</style>
+</head>
+<body>
+
+<div id="login">
+  <form onsubmit="doLogin(event)">
+    <h1>Saloon Admin</h1>
+    <input type="password" id="pw" placeholder="Admin password" autofocus>
+    <button type="submit">Sign in</button>
+    <div id="err"></div>
+  </form>
+</div>
+
+<div id="app">
+  <header>
+    <h1>Saloon Admin</h1>
+    <button id="logout" onclick="doLogout()">Sign out</button>
+  </header>
+
+  <div class="stats">
+    <div class="stat"><div class="stat-num" id="stat-total">—</div><div class="stat-label">Total users</div></div>
+    <div class="stat"><div class="stat-num" id="stat-pending">—</div><div class="stat-label">Pending review</div></div>
+    <div class="stat"><div class="stat-num" id="stat-verified">—</div><div class="stat-label">Verified</div></div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" onclick="setTab('pending')">Pending IDs</button>
+    <button class="tab" onclick="setTab('all')">All users</button>
+  </div>
+
+  <input id="search" type="search" placeholder="Search by name or email…" oninput="render()">
+
+  <div id="list"></div>
+</div>
+
+<script>
+const API = 'https://saloonorg-production.up.railway.app';
+let adminKey = '';
+let users = [];
+let currentTab = 'pending';
+
+async function doLogin(e) {
+  e.preventDefault();
+  const pw = document.getElementById('pw').value.trim();
+  if (!pw) return;
+  try {
+    const r = await fetch(`${API}/api/admin/users`, { headers: { 'x-admin-key': pw } });
+    if (!r.ok) { document.getElementById('err').textContent = 'Wrong password.'; return; }
+    users = await r.json();
+    adminKey = pw;
+    document.getElementById('login').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    render();
+  } catch { document.getElementById('err').textContent = 'Server unreachable.'; }
+}
+
+function doLogout() {
+  adminKey = '';
+  users = [];
+  document.getElementById('login').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('pw').value = '';
+  document.getElementById('err').textContent = '';
+}
+
+async function refresh() {
+  const r = await fetch(`${API}/api/admin/users`, { headers: { 'x-admin-key': adminKey } });
+  users = await r.json();
+  render();
+}
+
+function setTab(t) {
+  currentTab = t;
+  document.querySelectorAll('.tab').forEach((el, i) => el.classList.toggle('active', (i === 0 && t === 'pending') || (i === 1 && t === 'all')));
+  render();
+}
+
+function render() {
+  const q = document.getElementById('search').value.toLowerCase();
+  let list = users;
+  if (currentTab === 'pending') list = list.filter(u => u.idSubmitted && !u.verified);
+  if (q) list = list.filter(u => (`${u.firstName} ${u.lastName} ${u.email}`).toLowerCase().includes(q));
+
+  document.getElementById('stat-total').textContent = users.length;
+  document.getElementById('stat-pending').textContent = users.filter(u => u.idSubmitted && !u.verified).length;
+  document.getElementById('stat-verified').textContent = users.filter(u => u.verified).length;
+
+  if (!list.length) {
+    document.getElementById('list').innerHTML = '<div class="empty">No users here.</div>';
+    return;
+  }
+
+  document.getElementById('list').innerHTML = list.map(u => {
+    const badge = u.verified ? '<span class="badge badge-verified">Verified</span>'
+      : u.idSubmitted ? '<span class="badge badge-pending">Pending</span>'
+      : u.idRejected ? '<span class="badge badge-rejected">Rejected</span>' : '';
+    const actions = u.idSubmitted && !u.verified
+      ? `<button class="btn-sm btn-verify" onclick="verify('${u.id}')">Verify</button>
+         <button class="btn-sm btn-reject" onclick="reject('${u.id}')">Reject</button>`
+      : '';
+    const delBtn = `<button class="btn-sm btn-delete" onclick="del('${u.id}')">Delete</button>`;
+    const joined = new Date(u.createdAt).toLocaleDateString();
+    const idFile = u.idFileName ? `· ID: ${u.idFileName}` : '';
+    return `<div class="card" id="u-${u.id}">
+      <div class="card-info">
+        <div class="name">${esc(u.firstName)} ${esc(u.lastName)} ${badge}</div>
+        <div class="meta">${esc(u.email)} · Joined ${joined} ${idFile}</div>
+      </div>
+      <div class="card-actions">${actions}${delBtn}</div>
+    </div>`;
+  }).join('');
+}
+
+async function verify(id) {
+  await fetch(`${API}/api/admin/users/${id}/verify`, { method: 'PATCH', headers: { 'x-admin-key': adminKey } });
+  await refresh();
+}
+
+async function reject(id) {
+  if (!confirm('Reject this ID submission?')) return;
+  await fetch(`${API}/api/admin/users/${id}/reject`, { method: 'PATCH', headers: { 'x-admin-key': adminKey } });
+  await refresh();
+}
+
+async function del(id) {
+  if (!confirm('Permanently delete this user?')) return;
+  await fetch(`${API}/api/admin/users/${id}`, { method: 'DELETE', headers: { 'x-admin-key': adminKey } });
+  await refresh();
+}
+
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+}
+</script>
+</body>
+</html>

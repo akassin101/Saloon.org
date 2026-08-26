@@ -344,6 +344,56 @@ app.post('/api/users/:id/follow', requireAuth, (req, res) => {
   res.json({ following: follower.following.includes(targetId) });
 });
 
+// ─── ADMIN ────────────────────────────────────────────────────────────────────
+// Protected by a separate ADMIN_SECRET env var — never the same as JWT_SECRET.
+
+const ADMIN_SECRET = process.env.ADMIN_SECRET || 'saloon-admin-change-this';
+
+function requireAdmin(req, res, next) {
+  const key = req.headers['x-admin-key'];
+  if (!key || key !== ADMIN_SECRET) return res.status(401).json({ error: 'Unauthorized.' });
+  next();
+}
+
+app.get('/api/admin/users', requireAdmin, (req, res) => {
+  res.json(db.users.map(u => ({
+    id: u.id,
+    firstName: u.firstName,
+    lastName: u.lastName,
+    email: u.email,
+    verified: u.verified,
+    idSubmitted: u.idSubmitted,
+    idFileName: u.idFileName,
+    createdAt: u.createdAt
+  })));
+});
+
+app.patch('/api/admin/users/:id/verify', requireAdmin, (req, res) => {
+  const user = db.users.find(u => u.id === req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  user.verified = true;
+  saveDB();
+  res.json({ ok: true });
+});
+
+app.patch('/api/admin/users/:id/reject', requireAdmin, (req, res) => {
+  const user = db.users.find(u => u.id === req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  user.verified = false;
+  user.idSubmitted = false;
+  user.idRejected = true;
+  saveDB();
+  res.json({ ok: true });
+});
+
+app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
+  const idx = db.users.findIndex(u => u.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'User not found.' });
+  db.users.splice(idx, 1);
+  saveDB();
+  res.json({ ok: true });
+});
+
 // ─── START ────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
