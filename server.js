@@ -21,12 +21,14 @@
  *   - Upload both server.js and package.json; run npm install && npm start
  */
 
-const express   = require('express');
-const cors      = require('cors');
-const jwt       = require('jsonwebtoken');
-const bcrypt    = require('bcryptjs');
-const fs        = require('fs');
-const path      = require('path');
+const express    = require('express');
+const cors       = require('cors');
+const jwt        = require('jsonwebtoken');
+const bcrypt     = require('bcryptjs');
+const fs         = require('fs');
+const path       = require('path');
+const nodemailer = require('nodemailer');
+const crypto     = require('crypto');
 
 const helmet    = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -40,10 +42,32 @@ app.use(rateLimit({
   standardHeaders: true,
   legacyHeaders: false
 }));
-const PORT   = process.env.PORT || 3000;
-const SECRET = process.env.JWT_SECRET || 'saloon-dev-secret-change-in-production';
-const DATA   = path.join(__dirname, 'data.json');
-const ORIGIN = process.env.FRONTEND_ORIGIN || '*'; // restrict in production
+const PORT        = process.env.PORT || 3000;
+const SECRET      = process.env.JWT_SECRET || 'saloon-dev-secret-change-in-production';
+const DATA        = path.join(__dirname, 'data.json');
+const ORIGIN      = process.env.FRONTEND_ORIGIN || '*';
+const SITE_URL    = process.env.SITE_URL || 'https://saloon.org';
+const FROM_EMAIL  = process.env.FROM_EMAIL || 'noreply@saloon.org';
+
+// ─── EMAIL ─────────────────────────────────────────────────────────────────────
+
+const mailer = nodemailer.createTransport({
+  host:   process.env.SMTP_HOST,
+  port:   Number(process.env.SMTP_PORT) || 587,
+  secure: process.env.SMTP_SECURE === 'true',
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  }
+});
+
+async function sendMail(to, subject, html) {
+  if (!process.env.SMTP_HOST) {
+    console.log(`[email] To: ${to}\nSubject: ${subject}\n${html.replace(/<[^>]+>/g,'')}`);
+    return;
+  }
+  await mailer.sendMail({ from: FROM_EMAIL, to, subject, html });
+}
 
 // ─── PERSISTENCE ──────────────────────────────────────────────────────────────
 
@@ -117,12 +141,15 @@ app.post('/api/auth/register', async (req, res) => {
     return res.status(400).json({ error: 'An account with that email already exists.' });
 
   const passwordHash = await bcrypt.hash(password, 10);
+  const emailVerifyToken = crypto.randomBytes(32).toString('hex');
   const user = {
     id: uid(),
     firstName: firstName.trim(),
     lastName: lastName.trim(),
     email: email.toLowerCase().trim(),
     passwordHash,
+    emailVerified: false,
+    emailVerifyToken,
     idFileName: idFileName || '',
     idSubmitted: !!idFileName,
     verified: false,
@@ -131,7 +158,6 @@ app.post('/api/auth/register', async (req, res) => {
     recommendedBooks: [], recommendedFilms: [], following: []
   };
 
-  // Auto-join any conversations this email was invited to
   const pending = db.invitations.filter(i => i.email === user.email);
   pending.forEach(inv => {
     const c = db.conversations.find(c => c.id === inv.convId);
@@ -142,8 +168,16 @@ app.post('/api/auth/register', async (req, res) => {
   db.users.push(user);
   saveDB();
 
+  const verifyUrl = `${SITE_URL}?verify=${emailVerifyToken}`;
+  await sendMail(user.email, 'Verify your Saloon email', `
+    <p>Hi ${user.firstName},</p>
+    <p>Click the link below to verify your email address and activate your Saloon account:</p>
+    <p><a href="${verifyUrl}">${verifyUrl}</a></p>
+    <p>This link expires in 24 hours.</p>
+  `).catch(e => console.error('[email] send failed:', e.message));
+
   const token = jwt.sign({ id: user.id }, SECRET, { expiresIn: '30d' });
-  res.json({ user: pub(user), token });
+  res.json({ user: pub(user), token, emailVerificationRequired: true });
 });
 
 app.post('/api/auth/login', async (req, res) => {
@@ -152,8 +186,71 @@ app.post('/api/auth/login', async (req, res) => {
   if (!user) return res.status(400).json({ error: 'No account found with that email.' });
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) return res.status(400).json({ error: 'Incorrect password.' });
+  if (!user.emailVerified)
+    return res.status(403).json({ error: 'Please verify your email before signing in. Check your inbox for a verification link.', emailVerificationRequired: true });
   const token = jwt.sign({ id: user.id }, SECRET, { expiresIn: '30d' });
   res.json({ user: pub(user), token });
+});
+
+app.post('/api/auth/verify-email', (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.status(400).json({ error: 'Token is required.' });
+  const user = db.users.find(u => u.emailVerifyToken === token);
+  if (!user) return res.status(400).json({ error: 'Invalid or expired verification link.' });
+  user.emailVerified = true;
+  user.emailVerifyToken = null;
+  saveDB();
+  const jwt_token = jwt.sign({ id: user.id }, SECRET, { expiresIn: '30d' });
+  res.json({ user: pub(user), token: jwt_token });
+});
+
+app.post('/api/auth/resend-verification', async (req, res) => {
+  const { email } = req.body;
+  const user = db.users.find(u => u.email === email?.toLowerCase()?.trim());
+  if (!user || user.emailVerified) return res.json({ ok: true }); // silent — don't leak info
+  const newToken = crypto.randomBytes(32).toString('hex');
+  user.emailVerifyToken = newToken;
+  saveDB();
+  const verifyUrl = `${SITE_URL}?verify=${newToken}`;
+  await sendMail(user.email, 'Verify your Saloon email', `
+    <p>Hi ${user.firstName},</p>
+    <p>Click the link below to verify your email address:</p>
+    <p><a href="${verifyUrl}">${verifyUrl}</a></p>
+  `).catch(e => console.error('[email] send failed:', e.message));
+  res.json({ ok: true });
+});
+
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const { email } = req.body;
+  const user = db.users.find(u => u.email === email?.toLowerCase()?.trim());
+  res.json({ ok: true }); // always respond ok — don't leak whether email exists
+  if (!user) return;
+  const resetToken = crypto.randomBytes(32).toString('hex');
+  user.resetToken = resetToken;
+  user.resetTokenExpiry = Date.now() + 60 * 60 * 1000; // 1 hour
+  saveDB();
+  const resetUrl = `${SITE_URL}?reset=${resetToken}`;
+  await sendMail(user.email, 'Reset your Saloon password', `
+    <p>Hi ${user.firstName},</p>
+    <p>Click the link below to reset your password. This link expires in 1 hour.</p>
+    <p><a href="${resetUrl}">${resetUrl}</a></p>
+    <p>If you didn't request this, you can safely ignore this email.</p>
+  `).catch(e => console.error('[email] send failed:', e.message));
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  const { token, password } = req.body;
+  if (!token || !password) return res.status(400).json({ error: 'Token and password are required.' });
+  if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  const user = db.users.find(u => u.resetToken === token && u.resetTokenExpiry > Date.now());
+  if (!user) return res.status(400).json({ error: 'Reset link is invalid or has expired.' });
+  user.passwordHash = await bcrypt.hash(password, 10);
+  user.resetToken = null;
+  user.resetTokenExpiry = null;
+  user.emailVerified = true; // password reset implies email ownership
+  saveDB();
+  const jwt_token = jwt.sign({ id: user.id }, SECRET, { expiresIn: '30d' });
+  res.json({ user: pub(user), token: jwt_token });
 });
 
 app.get('/api/auth/me', requireAuth, (req, res) => {
