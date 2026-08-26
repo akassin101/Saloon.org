@@ -35,6 +35,7 @@ const rateLimit = require('express-rate-limit');
 
 const app = express();
 
+app.set('trust proxy', 1);
 app.use(helmet());
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -51,13 +52,14 @@ const FROM_EMAIL  = process.env.FROM_EMAIL || 'noreply@saloon.org';
 
 // ─── EMAIL ─────────────────────────────────────────────────────────────────────
 
+const strip = v => v ? v.replace(/^["']|["']$/g, '') : v;
 const mailer = nodemailer.createTransport({
-  host:   process.env.SMTP_HOST,
-  port:   Number(process.env.SMTP_PORT) || 587,
-  secure: process.env.SMTP_SECURE === 'true',
+  host:   strip(process.env.SMTP_HOST),
+  port:   Number(strip(process.env.SMTP_PORT)) || 587,
+  secure: strip(process.env.SMTP_SECURE) === 'true',
   auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
+    user: strip(process.env.SMTP_USER),
+    pass: strip(process.env.SMTP_PASS),
   }
 });
 
