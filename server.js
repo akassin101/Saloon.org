@@ -73,6 +73,11 @@ async function sendMail(to, subject, html) {
 
 let db = loadDB();
 
+// Migrate existing users: anyone created before email verification was added
+// gets emailVerified=true so they aren't locked out.
+db.users.forEach(u => { if (u.emailVerified === undefined) u.emailVerified = true; });
+saveDB();
+
 function loadDB() {
   try {
     if (fs.existsSync(DATA)) return JSON.parse(fs.readFileSync(DATA, 'utf8'));
