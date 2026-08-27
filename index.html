@@ -796,9 +796,11 @@
     font-family: var(--font-ui);
     font-size: 13px;
     overflow-x: auto;
+    scrollbar-width: none;
   }
+  .profile-tabs::-webkit-scrollbar { display: none; }
   .profile-tab {
-    padding: 10px 16px;
+    padding: 8px 14px;
     cursor: pointer;
     color: var(--muted);
     border-bottom: 2px solid transparent;
