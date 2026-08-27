@@ -1476,7 +1476,7 @@ function renderFeedItem(conv) {
         <span>by <strong>${nameLink(creator)}</strong></span>
         <span class="meta-stat">${conv.viewCount||0} views</span>
         <span class="meta-stat">↑${(conv.likes||[]).length} ↓${(conv.dislikes||[]).length}</span>
-        <span class="meta-stat">✦ ${posts.length} conversations</span>
+        <span class="meta-stat">✦ ${posts.length} posts</span>
         <span class="meta-stat">◎ ${comments.length} comments</span>
         <span>${timeAgo(conv.createdAt)}</span>
       </div>
@@ -1910,7 +1910,7 @@ function renderConversation(id) {
           <span class="stat-pill">${conv.viewCount||0} views</span>
           <span class="stat-pill clickable ${userLiked?'active-like':''}" onclick="voteConv('${id}','like')">↑ ${(conv.likes||[]).length}</span>
           <span class="stat-pill clickable ${userDisliked?'active-dislike':''}" onclick="voteConv('${id}','dislike')">↓ ${(conv.dislikes||[]).length}</span>
-          <span class="stat-pill">✦ ${posts.length} conversations</span>
+          <span class="stat-pill">✦ ${posts.length} posts</span>
           <span class="stat-pill">◎ ${allComments.length} comments</span>
           <span class="stat-pill clickable" onclick="copyConvLink()" title="Copy shareable link">⎘ Share</span>
         </div>
