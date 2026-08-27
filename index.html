@@ -1918,6 +1918,7 @@ function renderConversation(id) {
           <span class="stat-pill">✦ ${posts.length} posts</span>
           <span class="stat-pill">◎ ${allComments.length} comments</span>
           <span class="stat-pill clickable" onclick="copyConvLink()" title="Copy shareable link">⎘ Share</span>
+          ${isAdmin() ? `<span class="stat-pill clickable" style="color:#c0392b" onclick="deleteConversation('${id}')">✕ Delete</span>` : ''}
         </div>
 
         <div class="participants-list" style="margin-top:14px">
@@ -2295,6 +2296,19 @@ function publishConvDraft(convId) {
   if (openingPost) bw('PUT', '/api/posts/' + openingPost.id, { content: openingPost.content, draft: false });
   toast('Conversation published.');
   navigate('conversation', convId);
+}
+
+function deleteConversation(convId) {
+  if (!isAdmin()) return;
+  if (!confirm('Permanently delete this conversation and all its posts?')) return;
+  const idx = DB.conversations.findIndex(c => c.id === convId);
+  if (idx !== -1) DB.conversations.splice(idx, 1);
+  DB.posts = DB.posts.filter(p => p.conversationId !== convId);
+  DB.comments = DB.comments.filter(c => c.conversationId !== convId);
+  DB.save();
+  bw('DELETE', '/api/conversations/' + convId, null);
+  toast('Conversation deleted.');
+  navigate('home');
 }
 
 function deleteConvDraft(convId) {
