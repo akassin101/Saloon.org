@@ -353,10 +353,11 @@ app.get('/api/auth/me', requireAuth, (req, res) => {
 // Password hashes are never included.
 
 app.get('/api/data', optionalAuth, (req, res) => {
+  const userId = req.user?.id;
   res.json({
     users:         db.users.map(pub),
     conversations: db.conversations,
-    posts:         db.posts,
+    posts:         db.posts.filter(p => !p.draft || p.authorId === userId),
     comments:      db.comments,
     invitations:   db.invitations
   });
@@ -460,18 +461,45 @@ app.post('/api/conversations/:id/participants', requireAuth, (req, res) => {
 // ─── POSTS ────────────────────────────────────────────────────────────────────
 
 app.post('/api/posts', requireAuth, (req, res) => {
-  const { conversationId, content } = req.body;
+  const { conversationId, content, draft } = req.body;
   if (!content || content.length > 20000)
     return res.status(400).json({ error: 'Content required and must be under 20 000 chars.' });
   const conv = db.conversations.find(c => c.id === conversationId);
   if (!conv) return res.status(404).json({ error: 'Conversation not found.' });
   if (!conv.participants.includes(req.user.id))
     return res.status(403).json({ error: 'You are not a participant in this conversation.' });
-  const post = { id: uid(), conversationId, authorId: req.user.id, content, createdAt: Date.now() };
+  const post = { id: uid(), conversationId, authorId: req.user.id, content, draft: !!draft, createdAt: Date.now() };
   db.posts.push(post);
-  conv.lastActivity = Date.now();
+  if (!draft) conv.lastActivity = Date.now();
   saveDB();
   res.json(post);
+});
+
+app.put('/api/posts/:id', requireAuth, (req, res) => {
+  const post = db.posts.find(p => p.id === req.params.id);
+  if (!post) return res.status(404).json({ error: 'Post not found.' });
+  if (post.authorId !== req.user.id) return res.status(403).json({ error: 'Not your post.' });
+  const { content, draft } = req.body;
+  if (content !== undefined) {
+    if (!content || content.length > 20000) return res.status(400).json({ error: 'Invalid content.' });
+    post.content = content;
+  }
+  if (draft !== undefined) post.draft = !!draft;
+  if (!post.draft) {
+    const conv = db.conversations.find(c => c.id === post.conversationId);
+    if (conv) conv.lastActivity = Date.now();
+  }
+  saveDB();
+  res.json(post);
+});
+
+app.delete('/api/posts/:id', requireAuth, (req, res) => {
+  const idx = db.posts.findIndex(p => p.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Post not found.' });
+  if (db.posts[idx].authorId !== req.user.id) return res.status(403).json({ error: 'Not your post.' });
+  db.posts.splice(idx, 1);
+  saveDB();
+  res.json({ ok: true });
 });
 
 // ─── COMMENTS ─────────────────────────────────────────────────────────────────

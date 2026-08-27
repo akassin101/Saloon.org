@@ -1942,7 +1942,10 @@ function renderConversation(id) {
           <textarea id="post-compose" placeholder="Write your thoughts…"></textarea>
           <div class="submit-row">
             <span class="compose-hint">Select text in any post to annotate it. Use "◎ Comment on conversation" to comment on the whole piece.</span>
-            <button class="btn-primary btn-sm" onclick="submitPost('${id}')">Contribute</button>
+            <div style="display:flex;gap:8px">
+              <button class="btn-ghost btn-sm" onclick="saveDraft('${id}')">Save Draft</button>
+              <button class="btn-primary btn-sm" onclick="submitPost('${id}')">Contribute</button>
+            </div>
           </div>
         </div>
       ` : (!currentUser ? `
@@ -2206,6 +2209,45 @@ function submitPost(convId) {
   renderConversation(convId);
 }
 
+function saveDraft(convId) {
+  const auth = getAuthUser();
+  if (!auth) { navigate('login'); return; }
+  const content = document.getElementById('post-compose').value.trim();
+  if (!content) { toast('Write something first.'); return; }
+  const conv = DB.conversations.find(c => c.id === convId);
+  if (!conv || !(conv.participants||[]).includes(auth.id)) { toast('You are not a participant.'); return; }
+  const post = { id: DB.uid(), conversationId: convId, authorId: auth.id, content, draft: true, createdAt: Date.now() };
+  DB.posts.push(post);
+  DB.save();
+  bw('POST', '/api/posts', post);
+  document.getElementById('post-compose').value = '';
+  toast('Draft saved.');
+}
+
+function publishDraft(postId) {
+  const post = DB.posts.find(p => p.id === postId);
+  if (!post) return;
+  const content = document.getElementById('draft-edit-' + postId)?.value.trim() || post.content;
+  post.content = content;
+  post.draft = false;
+  const conv = DB.conversations.find(c => c.id === post.conversationId);
+  if (conv) conv.lastActivity = Date.now();
+  DB.save();
+  bw('PUT', '/api/posts/' + postId, { content, draft: false });
+  toast('Published.');
+  renderProfile(getAuthUser().id);
+}
+
+function deleteDraft(postId) {
+  if (!confirm('Delete this draft?')) return;
+  const idx = DB.posts.findIndex(p => p.id === postId);
+  if (idx !== -1) DB.posts.splice(idx, 1);
+  DB.save();
+  bw('DELETE', '/api/posts/' + postId, null);
+  toast('Draft deleted.');
+  renderProfile(getAuthUser().id);
+}
+
 // ─── CONV-LEVEL COMMENT ───────────────────────────────────────────────────────
 
 function submitConvComment(convId) {
@@ -2387,9 +2429,11 @@ function renderProfile(userId) {
   const likedConvs = DB.conversations.filter(c => (c.likes||[]).includes(userId));
   const isFollowing = currentUser && (currentUser.following||[]).includes(userId);
 
-  const tabs = ['about','posts','liked','interests','following','followers'];
+  const drafts = isOwn ? DB.posts.filter(p => p.draft && p.authorId === userId) : [];
+  const tabs = ['about','posts','liked','interests','following','followers', ...(isOwn ? ['drafts'] : [])];
   const tabLabels = { about: 'About', posts: `Conversations (${userConvs.length})`, liked: `Liked (${likedConvs.length})`,
-    interests: 'Interests', following: `Following (${following.length})`, followers: `Followers (${followers.length})` };
+    interests: 'Interests', following: `Following (${following.length})`, followers: `Followers (${followers.length})`,
+    drafts: `Drafts (${drafts.length})` };
 
   const el = document.getElementById('page-profile');
 
@@ -2458,6 +2502,26 @@ function renderProfile(userId) {
     tabContent = followers.length === 0
       ? `<div class="empty-state" style="padding:40px 0"><div class="empty-icon">◎</div><h3>No followers yet</h3></div>`
       : followers.map(u => renderFollowRow(u)).join('');
+  } else if (profileTab === 'drafts') {
+    if (drafts.length === 0) {
+      tabContent = `<div class="empty-state" style="padding:40px 0"><div class="empty-icon">✦</div><h3>No drafts</h3></div>`;
+    } else {
+      tabContent = drafts.map(d => {
+        const conv = DB.conversations.find(c => c.id === d.conversationId);
+        return `
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:20px 24px;margin-bottom:16px">
+            <div style="font-family:var(--font-ui);font-size:12px;color:var(--muted);margin-bottom:8px">
+              Draft for: <strong>${conv ? esc(conv.title) : 'Unknown conversation'}</strong>
+              <span style="float:right">${new Date(d.createdAt).toLocaleDateString()}</span>
+            </div>
+            <textarea id="draft-edit-${d.id}" style="width:100%;min-height:120px;padding:10px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-body);font-size:15px;background:var(--bg);color:var(--text);resize:vertical">${esc(d.content)}</textarea>
+            <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
+              <button class="btn-ghost btn-sm" onclick="deleteDraft('${d.id}')" style="color:var(--muted)">Delete</button>
+              <button class="btn-primary btn-sm" onclick="publishDraft('${d.id}')">Publish</button>
+            </div>
+          </div>`;
+      }).join('');
+    }
   }
 
   el.innerHTML = `
