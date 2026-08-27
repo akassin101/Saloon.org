@@ -2524,11 +2524,10 @@ function submitNewConversation(asDraft = false) {
   const title = document.getElementById('new-conv-title').value.trim();
   const rawCategory = document.getElementById('new-conv-category').value;
   const customCategory = document.getElementById('new-conv-category-custom').value.trim();
-  const category = rawCategory === 'Other' ? customCategory : rawCategory;
+  const category = rawCategory === 'Other' ? (customCategory || 'Other') : rawCategory;
   const body = document.getElementById('new-conv-body').value.trim();
   if (!title) { toast('Please give your conversation a title.'); return; }
   if (!rawCategory) { toast('Please select a category.'); return; }
-  if (rawCategory === 'Other' && !customCategory) { toast('Please enter a category name.'); return; }
   if (!body) { toast('Please write an opening message.'); return; }
 
   const convId = DB.uid();
