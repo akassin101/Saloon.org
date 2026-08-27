@@ -1943,12 +1943,15 @@ function renderConversation(id) {
               <div style="font-family:var(--font-ui);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Join requests (${requests.length})</div>
               ${requests.map(r => {
                 const u = DB.users.find(x => x.id === r.userId);
-                return u ? `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-                  <a class="name-link" onclick="navigate('profile','${u.id}');return false" href="#">${esc(displayName(u))}</a>
-                  <div style="display:flex;gap:6px">
-                    <button class="btn-ghost btn-sm" style="color:var(--muted)" onclick="declineJoinRequest('${id}','${u.id}')">Decline</button>
-                    <button class="btn-primary btn-sm" onclick="acceptJoinRequest('${id}','${u.id}')">Accept</button>
+                return u ? `<div style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:${r.message ? '6px' : '0'}">
+                    <a class="name-link" onclick="navigate('profile','${u.id}');return false" href="#">${esc(displayName(u))}</a>
+                    <div style="display:flex;gap:6px">
+                      <button class="btn-ghost btn-sm" style="color:var(--muted)" onclick="declineJoinRequest('${id}','${u.id}')">Decline</button>
+                      <button class="btn-primary btn-sm" onclick="acceptJoinRequest('${id}','${u.id}')">Accept</button>
+                    </div>
                   </div>
+                  ${r.message ? `<p style="font-family:var(--font-body);font-size:13px;color:var(--muted);margin:0;font-style:italic">"${esc(r.message)}"</p>` : ''}
                 </div>` : '';
               }).join('')}
             </div>`;
@@ -2000,8 +2003,13 @@ function renderConversation(id) {
             const hasRequested = (conv.joinRequests || []).some(r => r.userId === currentUser.id);
             return hasRequested
               ? `<span style="font-family:var(--font-ui);font-size:14px;color:var(--muted)">Request sent — waiting for approval.</span>`
-              : `<button class="btn-ghost" onclick="requestJoin('${id}')">Request to join this conversation</button>
-                 <p style="font-family:var(--font-ui);font-size:12px;color:var(--muted);margin-top:8px">You may still comment on the conversation below.</p>`;
+              : `<div style="max-width:420px;margin:0 auto;text-align:left">
+                   <p style="font-family:var(--font-ui);font-size:13px;color:var(--muted);margin-bottom:10px;text-align:center">Send a message with your request (optional)</p>
+                   <textarea id="join-request-msg" rows="3" placeholder="Why do you want to join this conversation?" style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:4px;font-family:var(--font-body);font-size:14px;background:var(--bg);color:var(--text);resize:vertical;margin-bottom:10px"></textarea>
+                   <div style="display:flex;justify-content:center">
+                     <button class="btn-ghost" onclick="requestJoin('${id}')">Send request</button>
+                   </div>
+                 </div>`;
           })()}
         </div>
       `)}
@@ -2465,7 +2473,9 @@ function requestJoin(convId) {
   if (!conv) return;
   if (!conv.joinRequests) conv.joinRequests = [];
   if (conv.joinRequests.some(r => r.userId === auth.id)) return;
-  conv.joinRequests.push({ userId: auth.id, requestedAt: Date.now() });
+  const msgEl = document.getElementById('join-request-msg');
+  const message = msgEl ? msgEl.value.trim() : '';
+  conv.joinRequests.push({ userId: auth.id, requestedAt: Date.now(), message });
   DB.save();
   bw('PUT', '/api/conversations/' + convId, { joinRequests: conv.joinRequests });
   toast('Request sent.');
