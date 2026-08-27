@@ -1934,6 +1934,27 @@ function renderConversation(id) {
             return u ? `<a class="participant-chip name-link" onclick="navigate('profile','${u.id}');return false" href="#">${esc(displayName(u))}</a>` : '';
           }).join('')}
         </div>
+
+        ${(() => {
+          const requests = (conv.joinRequests || []);
+          const isCreator = currentUser && currentUser.id === conv.creatorId;
+          if (isCreator && requests.length > 0) {
+            return `<div style="margin-top:16px;padding:14px 16px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+              <div style="font-family:var(--font-ui);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Join requests (${requests.length})</div>
+              ${requests.map(r => {
+                const u = DB.users.find(x => x.id === r.userId);
+                return u ? `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                  <a class="name-link" onclick="navigate('profile','${u.id}');return false" href="#">${esc(displayName(u))}</a>
+                  <div style="display:flex;gap:6px">
+                    <button class="btn-ghost btn-sm" style="color:var(--muted)" onclick="declineJoinRequest('${id}','${u.id}')">Decline</button>
+                    <button class="btn-primary btn-sm" onclick="acceptJoinRequest('${id}','${u.id}')">Accept</button>
+                  </div>
+                </div>` : '';
+              }).join('')}
+            </div>`;
+          }
+          return '';
+        })()}
       </div>
 
       <div class="comment-view-toggle" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -1973,8 +1994,14 @@ function renderConversation(id) {
           <a href="#" onclick="navigate('login');return false">Sign in</a> to comment on this conversation.
         </div>
       ` : `
-        <div style="text-align:center;padding:20px 0 8px;font-family:var(--font-ui);font-size:14px;color:var(--muted)">
-          You're not a participant — you may still comment on the conversation below.
+        <div style="text-align:center;padding:24px 0 8px">
+          ${(() => {
+            const hasRequested = (conv.joinRequests || []).some(r => r.userId === currentUser.id);
+            return hasRequested
+              ? `<span style="font-family:var(--font-ui);font-size:14px;color:var(--muted)">Request sent — waiting for approval.</span>`
+              : `<button class="btn-ghost" onclick="requestJoin('${id}')">Request to join this conversation</button>
+                 <p style="font-family:var(--font-ui);font-size:12px;color:var(--muted);margin-top:8px">You may still comment on the conversation below.</p>`;
+          })()}
         </div>
       `)}
       </div><!-- end posts-card -->
@@ -2428,6 +2455,41 @@ function publishConvDraft(convId) {
   if (openingPost) bw('PUT', '/api/posts/' + openingPost.id, { content: openingPost.content, draft: false });
   toast('Conversation published.');
   navigate('conversation', convId);
+}
+
+function requestJoin(convId) {
+  const auth = getAuthUser();
+  if (!auth) { navigate('login'); return; }
+  const conv = DB.conversations.find(c => c.id === convId);
+  if (!conv) return;
+  if (!conv.joinRequests) conv.joinRequests = [];
+  if (conv.joinRequests.some(r => r.userId === auth.id)) return;
+  conv.joinRequests.push({ userId: auth.id, requestedAt: Date.now() });
+  DB.save();
+  bw('PUT', '/api/conversations/' + convId, { joinRequests: conv.joinRequests });
+  toast('Request sent.');
+  renderConversation(convId);
+}
+
+function acceptJoinRequest(convId, userId) {
+  const conv = DB.conversations.find(c => c.id === convId);
+  if (!conv) return;
+  conv.joinRequests = (conv.joinRequests || []).filter(r => r.userId !== userId);
+  if (!(conv.participants || []).includes(userId)) conv.participants.push(userId);
+  DB.save();
+  bw('PUT', '/api/conversations/' + convId, { joinRequests: conv.joinRequests, participants: conv.participants });
+  toast('Request accepted.');
+  renderConversation(convId);
+}
+
+function declineJoinRequest(convId, userId) {
+  const conv = DB.conversations.find(c => c.id === convId);
+  if (!conv) return;
+  conv.joinRequests = (conv.joinRequests || []).filter(r => r.userId !== userId);
+  DB.save();
+  bw('PUT', '/api/conversations/' + convId, { joinRequests: conv.joinRequests });
+  toast('Request declined.');
+  renderConversation(convId);
 }
 
 function deleteConversation(convId) {

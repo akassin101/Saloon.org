@@ -403,12 +403,28 @@ app.patch('/api/conversations/:id', requireAuth, (req, res) => {
 app.put('/api/conversations/:id', requireAuth, (req, res) => {
   const conv = db.conversations.find(c => c.id === req.params.id);
   if (!conv) return res.status(404).json({ error: 'Conversation not found.' });
-  if (conv.creatorId !== req.user.id) return res.status(403).json({ error: 'Only the creator can edit this.' });
+  const isCreator = conv.creatorId === req.user.id;
+
+  // Any authenticated user can submit a join request
+  if (req.body.joinRequests !== undefined && !isCreator) {
+    const incoming = Array.isArray(req.body.joinRequests) ? req.body.joinRequests : [];
+    // Only allow adding own userId
+    const existing = conv.joinRequests || [];
+    const myRequest = incoming.find(r => r.userId === req.user.id);
+    if (myRequest && !existing.some(r => r.userId === req.user.id)) existing.push(myRequest);
+    conv.joinRequests = existing;
+    saveDB();
+    return res.json(conv);
+  }
+
+  if (!isCreator) return res.status(403).json({ error: 'Only the creator can edit this.' });
   if (req.body.title !== undefined) conv.title = req.body.title;
   if (req.body.draft !== undefined) {
     conv.draft = !!req.body.draft;
     if (!conv.draft) conv.lastActivity = Date.now();
   }
+  if (req.body.joinRequests !== undefined) conv.joinRequests = Array.isArray(req.body.joinRequests) ? req.body.joinRequests : [];
+  if (req.body.participants !== undefined) conv.participants = Array.isArray(req.body.participants) ? req.body.participants : conv.participants;
   saveDB();
   res.json(conv);
 });
