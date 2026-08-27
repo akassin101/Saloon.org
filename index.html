@@ -1949,7 +1949,11 @@ function renderConversation(id) {
         <div class="compose-area" style="margin-top:0;border-top:1px solid var(--border);padding-top:24px;margin-bottom:24px">
           <h4>Add to the conversation</h4>
           <textarea id="post-compose" placeholder="Write your thoughts…"></textarea>
-          <div class="submit-row">
+          <div id="sources-list" style="margin-top:10px;display:none"></div>
+          <div style="margin-top:8px">
+            <button class="btn-ghost btn-sm" style="font-size:12px" onclick="addSourceField()">+ Add source</button>
+          </div>
+          <div class="submit-row" style="margin-top:12px">
             <span class="compose-hint">Select text in any post to annotate it. Use "◎ Comment on conversation" to comment on the whole piece.</span>
             <div style="display:flex;gap:8px">
               <button class="btn-ghost btn-sm" onclick="saveDraft('${id}')">Save Draft</button>
@@ -2041,7 +2045,14 @@ function renderPost(post, convId) {
         <button class="btn-primary btn-sm" onclick="savePostEdit('${post.id}','${convId}')">Save</button>
       </div>`;
   } else {
-    contentHtml = `<div class="post-content" id="post-content-${post.id}">${renderAnnotatedContent(post.content, postComments)}</div>`;
+    const sourcesHtml = post.sources && post.sources.length > 0 ? `
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="font-family:var(--font-ui);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Sources</div>
+        <ol style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px">
+          ${post.sources.map(s => `<li style="font-family:var(--font-ui);font-size:13px"><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">${esc(s.label)}</a></li>`).join('')}
+        </ol>
+      </div>` : '';
+    contentHtml = `<div class="post-content" id="post-content-${post.id}">${renderAnnotatedContent(post.content, postComments)}</div>${sourcesHtml}`;
   }
 
   let inner;
@@ -2218,6 +2229,35 @@ function submitComment() {
 
 // ─── SUBMIT POST ──────────────────────────────────────────────────────────────
 
+let sourceCount = 0;
+function addSourceField() {
+  const list = document.getElementById('sources-list');
+  if (!list) return;
+  list.style.display = 'block';
+  const n = ++sourceCount;
+  const row = document.createElement('div');
+  row.id = 'source-row-' + n;
+  row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:6px';
+  row.innerHTML = `
+    <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);min-width:16px">${n}.</span>
+    <input placeholder="Label (optional)" style="flex:0 0 140px;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-ui);font-size:13px;background:var(--bg);color:var(--text)" id="src-label-${n}">
+    <input placeholder="URL" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-ui);font-size:13px;background:var(--bg);color:var(--text)" id="src-url-${n}">
+    <button class="btn-ghost btn-sm" style="padding:4px 8px;font-size:12px;color:var(--muted)" onclick="document.getElementById('source-row-${n}').remove()">✕</button>
+  `;
+  list.appendChild(row);
+}
+
+function collectSources() {
+  const sources = [];
+  document.querySelectorAll('[id^="source-row-"]').forEach(row => {
+    const n = row.id.replace('source-row-', '');
+    const url = (document.getElementById('src-url-' + n)||{}).value?.trim();
+    const label = (document.getElementById('src-label-' + n)||{}).value?.trim();
+    if (url) sources.push({ url, label: label || url });
+  });
+  return sources;
+}
+
 function submitPost(convId) {
   const auth = getAuthUser();
   if (!auth) { navigate('login'); return; }
@@ -2229,11 +2269,13 @@ function submitPost(convId) {
     toast('You are not a participant in this conversation.'); return;
   }
 
-  const post = { id: DB.uid(), conversationId: convId, authorId: auth.id, content, createdAt: Date.now() };
+  const sources = collectSources();
+  const post = { id: DB.uid(), conversationId: convId, authorId: auth.id, content, sources, createdAt: Date.now() };
   DB.posts.push(post);
   conv.lastActivity = Date.now();
   DB.save();
   bw('POST', '/api/posts', post);
+  sourceCount = 0;
   toast('Contributed.');
   renderConversation(convId);
 }
