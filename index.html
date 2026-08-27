@@ -1006,6 +1006,7 @@
     </div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
       <button class="btn-ghost btn-sm" onclick="closeNewConvModal()">Cancel</button>
+      <button class="btn-ghost btn-sm" onclick="submitNewConversation(true)">Save Draft</button>
       <button class="btn-primary btn-sm" onclick="submitNewConversation()">Start conversation</button>
     </div>
   </div>
@@ -1390,7 +1391,7 @@ let feedCategory = '';
 
 function renderHome() {
   const el = document.getElementById('page-home');
-  let convs = [...DB.conversations];
+  let convs = DB.conversations.filter(c => !c.draft);
 
   if (feedCategory) convs = convs.filter(c => c.category === feedCategory);
 
@@ -2240,6 +2241,34 @@ function publishDraft(postId) {
   renderProfile(getAuthUser().id);
 }
 
+function publishConvDraft(convId) {
+  const conv = DB.conversations.find(c => c.id === convId);
+  if (!conv) return;
+  const titleEl = document.getElementById('cdraft-title-' + convId);
+  const bodyEl = document.getElementById('cdraft-body-' + convId);
+  if (titleEl) conv.title = titleEl.value.trim() || conv.title;
+  const openingPost = DB.posts.find(p => p.conversationId === convId);
+  if (openingPost && bodyEl) { openingPost.content = bodyEl.value.trim() || openingPost.content; openingPost.draft = false; }
+  conv.draft = false;
+  conv.lastActivity = Date.now();
+  DB.save();
+  bw('PUT', '/api/conversations/' + convId, { title: conv.title, draft: false });
+  if (openingPost) bw('PUT', '/api/posts/' + openingPost.id, { content: openingPost.content, draft: false });
+  toast('Conversation published.');
+  navigate('conversation', convId);
+}
+
+function deleteConvDraft(convId) {
+  if (!confirm('Delete this draft conversation?')) return;
+  const idx = DB.conversations.findIndex(c => c.id === convId);
+  if (idx !== -1) DB.conversations.splice(idx, 1);
+  DB.posts = DB.posts.filter(p => p.conversationId !== convId);
+  DB.save();
+  bw('DELETE', '/api/conversations/' + convId, null);
+  toast('Draft deleted.');
+  renderProfile(getAuthUser().id);
+}
+
 function deleteDraft(postId) {
   if (!confirm('Delete this draft?')) return;
   const idx = DB.posts.findIndex(p => p.id === postId);
@@ -2383,7 +2412,7 @@ function openNewConvModal() {
 
 function closeNewConvModal() { document.getElementById('new-conv-modal').classList.remove('open'); }
 
-function submitNewConversation() {
+function submitNewConversation(asDraft = false) {
   const auth = getAuthUser();
   if (!auth) { navigate('login'); return; }
   const title = document.getElementById('new-conv-title').value.trim();
@@ -2399,15 +2428,23 @@ function submitNewConversation() {
     creatorId: auth.id,
     participants: [auth.id],
     createdAt: Date.now(), lastActivity: Date.now(),
-    viewCount: 0, likes: [], dislikes: []
+    viewCount: 0, likes: [], dislikes: [],
+    draft: !!asDraft
   });
-  const openPost = { id: DB.uid(), conversationId: convId, authorId: auth.id, content: body, createdAt: Date.now() };
+  const openPost = { id: DB.uid(), conversationId: convId, authorId: auth.id, content: body, draft: !!asDraft, createdAt: Date.now() };
   DB.posts.push(openPost);
   DB.save();
-  bw('POST', '/api/conversations', { title, category, content: body });
+  bw('POST', '/api/conversations', { title, category, content: body, draft: !!asDraft });
   closeNewConvModal();
-  navigate('conversation', convId);
-  toast('Conversation started.');
+  if (asDraft) {
+    toast('Draft saved.');
+    navigate('profile', auth.id);
+    profileTab = 'drafts';
+    renderProfile(auth.id);
+  } else {
+    navigate('conversation', convId);
+    toast('Conversation started.');
+  }
 }
 
 // ─── PROFILE PAGE ────────────────────────────────────────────────────────────
@@ -2432,10 +2469,11 @@ function renderProfile(userId) {
   const isFollowing = currentUser && (currentUser.following||[]).includes(userId);
 
   const drafts = isOwn ? DB.posts.filter(p => p.draft && p.authorId === userId) : [];
+  const convDrafts = isOwn ? DB.conversations.filter(c => c.draft && c.creatorId === userId) : [];
   const tabs = ['about','posts','liked','interests','following','followers', ...(isOwn ? ['drafts'] : [])];
   const tabLabels = { about: 'About', posts: `Conversations (${userConvs.length})`, liked: `Liked (${likedConvs.length})`,
     interests: 'Interests', following: `Following (${following.length})`, followers: `Followers (${followers.length})`,
-    drafts: `Drafts (${drafts.length})` };
+    drafts: `Drafts (${drafts.length + convDrafts.length})` };
 
   const el = document.getElementById('page-profile');
 
@@ -2505,23 +2543,43 @@ function renderProfile(userId) {
       ? `<div class="empty-state" style="padding:40px 0"><div class="empty-icon">◎</div><h3>No followers yet</h3></div>`
       : followers.map(u => renderFollowRow(u)).join('');
   } else if (profileTab === 'drafts') {
-    if (drafts.length === 0) {
+    const allDrafts = [...convDrafts.map(c => ({type:'conv', data:c})), ...drafts.map(d => ({type:'post', data:d}))];
+    if (allDrafts.length === 0) {
       tabContent = `<div class="empty-state" style="padding:40px 0"><div class="empty-icon">✦</div><h3>No drafts</h3></div>`;
     } else {
-      tabContent = drafts.map(d => {
-        const conv = DB.conversations.find(c => c.id === d.conversationId);
-        return `
-          <div style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:20px 24px;margin-bottom:16px">
-            <div style="font-family:var(--font-ui);font-size:12px;color:var(--muted);margin-bottom:8px">
-              Draft for: <strong>${conv ? esc(conv.title) : 'Unknown conversation'}</strong>
-              <span style="float:right">${new Date(d.createdAt).toLocaleDateString()}</span>
-            </div>
-            <textarea id="draft-edit-${d.id}" style="width:100%;min-height:120px;padding:10px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-body);font-size:15px;background:var(--bg);color:var(--text);resize:vertical">${esc(d.content)}</textarea>
-            <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
-              <button class="btn-ghost btn-sm" onclick="deleteDraft('${d.id}')" style="color:var(--muted)">Delete</button>
-              <button class="btn-primary btn-sm" onclick="publishDraft('${d.id}')">Publish</button>
-            </div>
-          </div>`;
+      tabContent = allDrafts.map(item => {
+        if (item.type === 'conv') {
+          const c = item.data;
+          const openingPost = DB.posts.find(p => p.conversationId === c.id);
+          return `
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:20px 24px;margin-bottom:16px">
+              <div style="font-family:var(--font-ui);font-size:12px;color:var(--muted);margin-bottom:8px;display:flex;justify-content:space-between">
+                <span>📝 Conversation draft · <strong>${esc(c.category)}</strong></span>
+                <span>${new Date(c.createdAt).toLocaleDateString()}</span>
+              </div>
+              <input id="cdraft-title-${c.id}" type="text" value="${esc(c.title)}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-body);font-size:16px;font-weight:700;background:var(--bg);color:var(--text);margin-bottom:8px">
+              <textarea id="cdraft-body-${c.id}" style="width:100%;min-height:100px;padding:10px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-body);font-size:15px;background:var(--bg);color:var(--text);resize:vertical">${esc(openingPost ? openingPost.content : '')}</textarea>
+              <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
+                <button class="btn-ghost btn-sm" onclick="deleteConvDraft('${c.id}')" style="color:var(--muted)">Delete</button>
+                <button class="btn-primary btn-sm" onclick="publishConvDraft('${c.id}')">Publish</button>
+              </div>
+            </div>`;
+        } else {
+          const d = item.data;
+          const conv = DB.conversations.find(c => c.id === d.conversationId);
+          return `
+            <div style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:20px 24px;margin-bottom:16px">
+              <div style="font-family:var(--font-ui);font-size:12px;color:var(--muted);margin-bottom:8px;display:flex;justify-content:space-between">
+                <span>Post draft · <strong>${conv ? esc(conv.title) : 'Unknown conversation'}</strong></span>
+                <span>${new Date(d.createdAt).toLocaleDateString()}</span>
+              </div>
+              <textarea id="draft-edit-${d.id}" style="width:100%;min-height:120px;padding:10px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-body);font-size:15px;background:var(--bg);color:var(--text);resize:vertical">${esc(d.content)}</textarea>
+              <div style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end">
+                <button class="btn-ghost btn-sm" onclick="deleteDraft('${d.id}')" style="color:var(--muted)">Delete</button>
+                <button class="btn-primary btn-sm" onclick="publishDraft('${d.id}')">Publish</button>
+              </div>
+            </div>`;
+        }
       }).join('');
     }
   }

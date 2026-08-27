@@ -356,7 +356,7 @@ app.get('/api/data', optionalAuth, (req, res) => {
   const userId = req.user?.id;
   res.json({
     users:         db.users.map(pub),
-    conversations: db.conversations,
+    conversations: db.conversations.filter(c => !c.draft || c.creatorId === userId),
     posts:         db.posts.filter(p => !p.draft || p.authorId === userId),
     comments:      db.comments,
     invitations:   db.invitations
@@ -366,7 +366,7 @@ app.get('/api/data', optionalAuth, (req, res) => {
 // ─── CONVERSATIONS ────────────────────────────────────────────────────────────
 
 app.post('/api/conversations', requireAuth, (req, res) => {
-  const { title, category, content } = req.body;
+  const { title, category, content, draft } = req.body;
   if (!title || !category || !content)
     return res.status(400).json({ error: 'title, category, and content are required.' });
   if (title.length > 200)   return res.status(400).json({ error: 'Title too long (max 200 chars).' });
@@ -377,11 +377,12 @@ app.post('/api/conversations', requireAuth, (req, res) => {
     creatorId: req.user.id,
     participants: [req.user.id],
     createdAt: Date.now(), lastActivity: Date.now(),
-    viewCount: 0, likes: [], dislikes: []
+    viewCount: 0, likes: [], dislikes: [],
+    draft: !!draft
   };
   const post = {
     id: uid(), conversationId: conv.id,
-    authorId: req.user.id, content, createdAt: Date.now()
+    authorId: req.user.id, content, draft: !!draft, createdAt: Date.now()
   };
   db.conversations.push(conv);
   db.posts.push(post);
@@ -397,6 +398,29 @@ app.patch('/api/conversations/:id', requireAuth, (req, res) => {
   if (req.body.category) conv.category = req.body.category;
   saveDB();
   res.json(conv);
+});
+
+app.put('/api/conversations/:id', requireAuth, (req, res) => {
+  const conv = db.conversations.find(c => c.id === req.params.id);
+  if (!conv) return res.status(404).json({ error: 'Conversation not found.' });
+  if (conv.creatorId !== req.user.id) return res.status(403).json({ error: 'Only the creator can edit this.' });
+  if (req.body.title !== undefined) conv.title = req.body.title;
+  if (req.body.draft !== undefined) {
+    conv.draft = !!req.body.draft;
+    if (!conv.draft) conv.lastActivity = Date.now();
+  }
+  saveDB();
+  res.json(conv);
+});
+
+app.delete('/api/conversations/:id', requireAuth, (req, res) => {
+  const idx = db.conversations.findIndex(c => c.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Conversation not found.' });
+  if (db.conversations[idx].creatorId !== req.user.id) return res.status(403).json({ error: 'Only the creator can delete this.' });
+  db.conversations.splice(idx, 1);
+  db.posts = db.posts.filter(p => p.conversationId !== req.params.id);
+  saveDB();
+  res.json({ ok: true });
 });
 
 app.post('/api/conversations/:id/view', optionalAuth, (req, res) => {
