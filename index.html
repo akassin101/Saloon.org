@@ -1385,7 +1385,7 @@ function renderHome() {
     <div class="container">
       <div class="page-header">
         <h1>Saloon <span style="color:var(--gold);font-size:18px;vertical-align:middle;opacity:0.6">&#10022;</span></h1>
-        <p>Open conversations. Anyone can read. <a href="#" onclick="navigate('register');return false">Join</a> to participate.</p>
+        ${!currentUser ? `<p>Open conversations. Anyone can read. <a href="#" onclick="navigate('register');return false">Join</a> to participate.</p>` : ''}
       </div>
 
       <div class="category-filter">
