@@ -503,13 +503,14 @@ app.put('/api/posts/:id', requireAuth, (req, res) => {
   const post = db.posts.find(p => p.id === req.params.id);
   if (!post) return res.status(404).json({ error: 'Post not found.' });
   if (post.authorId !== req.user.id) return res.status(403).json({ error: 'Not your post.' });
-  const { content, draft, sources } = req.body;
+  const { content, draft, sources, edits } = req.body;
   if (content !== undefined) {
     if (!content || content.length > 20000) return res.status(400).json({ error: 'Invalid content.' });
     post.content = content;
   }
   if (draft !== undefined) post.draft = !!draft;
   if (sources !== undefined) post.sources = Array.isArray(sources) ? sources.slice(0, 20) : [];
+  if (edits !== undefined) post.edits = Array.isArray(edits) ? edits.slice(0, 100) : [];
   if (!post.draft) {
     const conv = db.conversations.find(c => c.id === post.conversationId);
     if (conv) conv.lastActivity = Date.now();

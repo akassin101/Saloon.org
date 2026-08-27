@@ -1856,6 +1856,7 @@ let editingTitle = false;
 let editingCategory = false;
 let editingPostId = null;
 let editingSourcesPostId = null;
+let viewingHistoryPostId = null;
 let commentView = 'inline'; // 'inline' | 'sidebar' | 'hidden'
 
 function renderConversation(id) {
@@ -2036,14 +2037,19 @@ function renderPost(post, convId) {
     const bPoster = participants.has(b.authorId) ? 0 : 1;
     return aPoster - bPoster || a.createdAt - b.createdAt;
   });
-  const editing = isAdmin() && editingPostId === post.id;
+  const EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
+  const withinEditWindow = currentUser && currentUser.id === post.authorId && (Date.now() - post.createdAt) < EDIT_WINDOW_MS;
+  const editing = (isAdmin() || withinEditWindow) && editingPostId === post.id;
   const editingSources = currentUser && currentUser.id === post.authorId && editingSourcesPostId === post.id;
+  const showingHistory = viewingHistoryPostId === post.id;
+  const hasEdits = post.edits && post.edits.length > 0;
 
   const authorLine = `
     <div class="post-author">
-      <span>${nameLink(author, 'font-weight:500')} · ${timeAgo(post.createdAt)}</span>
+      <span>${nameLink(author, 'font-weight:500')} · ${timeAgo(post.createdAt)}${hasEdits ? ` · <button class="post-action-btn" style="font-style:italic;opacity:.7" onclick="viewingHistoryPostId=viewingHistoryPostId==='${post.id}'?null:'${post.id}';renderConversation('${convId}')">edited</button>` : ''}</span>
       <div style="display:flex;gap:6px;align-items:center">
-        ${isAdmin() && !editing ? `<button class="post-action-btn" style="opacity:.5" onclick="editingPostId='${post.id}';renderConversation('${convId}')">edit</button>` : ''}
+        ${(isAdmin() || withinEditWindow) && !editing ? `<button class="post-action-btn" style="opacity:.5" onclick="editingPostId='${post.id}';renderConversation('${convId}')">edit</button>` : ''}
+        ${withinEditWindow && !editing ? `<button class="post-action-btn" style="opacity:.5;color:#c0392b" onclick="deleteOwnPost('${post.id}','${convId}')">delete</button>` : ''}
         ${currentUser ? `<button class="post-action-btn" onclick="openAnnotateModal('${post.id}','${convId}',null)">◎ comment</button>` : ''}
       </div>
     </div>
@@ -2065,7 +2071,16 @@ function renderPost(post, convId) {
           ${post.sources.map(s => `<li style="font-family:var(--font-ui);font-size:13px">${s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">${esc(s.label)}</a>` : esc(s.label)}</li>`).join('')}
         </ol>
       </div>` : '';
-    contentHtml = `<div class="post-content" id="post-content-${post.id}">${renderAnnotatedContent(post.content, postComments)}</div>${sourcesHtml}`;
+    const historyHtml = showingHistory && hasEdits ? `
+      <div style="margin-top:14px;padding:14px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+        <div style="font-family:var(--font-ui);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:12px">Edit history</div>
+        ${post.edits.slice().reverse().map((e, i) => `
+          <div style="margin-bottom:${i < post.edits.length-1 ? '14px' : '0'};padding-bottom:${i < post.edits.length-1 ? '14px' : '0'};border-bottom:${i < post.edits.length-1 ? '1px solid var(--border)' : 'none'}">
+            <div style="font-family:var(--font-ui);font-size:11px;color:var(--muted);margin-bottom:6px">${timeAgo(e.editedAt)}</div>
+            <div style="font-family:var(--font-body);font-size:14px;line-height:1.7;color:var(--muted);white-space:pre-wrap">${esc(e.content)}</div>
+          </div>`).join('')}
+      </div>` : '';
+    contentHtml = `<div class="post-content" id="post-content-${post.id}">${renderAnnotatedContent(post.content, postComments)}</div>${sourcesHtml}${historyHtml}`;
   }
 
   let inner;
@@ -2355,7 +2370,13 @@ function savePostEdit(postId, convId) {
   const content = el ? el.value.trim() : '';
   if (!content) { toast('Post cannot be empty.'); return; }
   const post = DB.posts.find(p => p.id === postId);
-  if (post) { post.content = content; DB.save(); bw('PUT', '/api/posts/' + postId, { content }); }
+  if (post) {
+    if (!post.edits) post.edits = [];
+    post.edits.push({ content: post.content, editedAt: Date.now() });
+    post.content = content;
+    DB.save();
+    bw('PUT', '/api/posts/' + postId, { content, edits: post.edits });
+  }
   editingPostId = null;
   toast('Post updated.');
   renderConversation(convId);
@@ -2431,6 +2452,20 @@ function deleteConvDraft(convId) {
   bw('DELETE', '/api/conversations/' + convId, null);
   toast('Draft deleted.');
   renderProfile(getAuthUser().id);
+}
+
+function deleteOwnPost(postId, convId) {
+  const post = DB.posts.find(p => p.id === postId);
+  if (!post) return;
+  const EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
+  if (!currentUser || currentUser.id !== post.authorId || (Date.now() - post.createdAt) >= EDIT_WINDOW_MS) return;
+  if (!confirm('Delete this post?')) return;
+  const idx = DB.posts.findIndex(p => p.id === postId);
+  if (idx !== -1) DB.posts.splice(idx, 1);
+  DB.save();
+  bw('DELETE', '/api/posts/' + postId, null);
+  toast('Post deleted.');
+  renderConversation(convId);
 }
 
 function deleteDraft(postId) {
