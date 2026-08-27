@@ -222,6 +222,21 @@ function safeUrl(url) {
   } catch(e) { return ''; }
 }
 
+// ─── CLIENT IDENTITY ──────────────────────────────────────────────────────────
+// Behind Railway's proxy chain req.ip resolves to an internal address that
+// varies between requests, which silently defeats anything keyed on it — rate
+// limits stop accumulating and view dedupe never matches. The real client is the
+// leftmost X-Forwarded-For entry. That value is spoofable, so treat it as a
+// best-effort grouping key, never as proof of identity.
+function clientIp(req) {
+  const xff = req.headers['x-forwarded-for'];
+  if (typeof xff === 'string' && xff) {
+    const first = xff.split(',')[0].trim();
+    if (first) return first;
+  }
+  return req.ip || 'unknown';
+}
+
 // ─── MIDDLEWARE ───────────────────────────────────────────────────────────────
 
 app.use(cors({ origin: ORIGIN }));
@@ -229,22 +244,25 @@ app.use(cors({ origin: ORIGIN }));
 // Tight limit on credential endpoints (brute force, reset-token spraying),
 // a generous one everywhere else so ordinary browsing — and anyone behind a
 // shared NAT — is never locked out.
-const authLimiter = rateLimit({
+const limiterBase = {
   windowMs: 15 * 60 * 1000,
-  max: 20,
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: clientIp,
+  // keyGenerator returns an already-normalised string, so skip the built-in
+  // IPv6 fallback validation rather than letting it warn on every request.
+  validate: { keyGeneratorIpFallback: false }
+};
+
+const authLimiter = rateLimit({
+  ...limiterBase,
+  max: 20,
   message: { error: 'Too many attempts. Please try again in a few minutes.' }
 });
 app.use('/api/auth', authLimiter);
 app.use('/api/admin', authLimiter);
 
-app.use(rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 1000,
-  standardHeaders: true,
-  legacyHeaders: false
-}));
+app.use(rateLimit({ ...limiterBase, max: 1000 }));
 
 app.use(express.json({ limit: '10mb' }));
 
@@ -669,7 +687,7 @@ app.post('/api/conversations/:id/view', optionalAuth, (req, res) => {
   const conv = db.conversations.find(c => c.id === req.params.id);
   if (!conv) return res.status(404).json({ error: 'Not found.' });
 
-  const who = req.user?.id || req.ip;
+  const who = req.user?.id || clientIp(req);
   const key = `${who}:${conv.id}`;
   const now = Date.now();
 
