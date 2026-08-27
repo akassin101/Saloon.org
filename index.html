@@ -1380,7 +1380,7 @@ function renderPage(page, id) {
     case 'home': renderHome(); break;
     case 'login': renderLogin(); break;
     case 'register': renderRegister(); break;
-    case 'conversation': renderConversation(id); break;
+    case 'conversation': renderConversation(id); trackView(id); break;
     case 'profile': renderProfile(id); break;
     case 'reset': renderResetPassword(id); break;
     case 'draft': renderDraftSandbox(id); break;
@@ -1877,20 +1877,23 @@ let editingSourcesPostId = null;
 let viewingHistoryPostId = null;
 let commentView = 'inline'; // 'inline' | 'sidebar' | 'hidden'
 
+function trackView(id) {
+  if (!id || !BACKEND_URL) return;
+  const viewKey = 'viewed_' + id;
+  if (sessionStorage.getItem(viewKey)) return;
+  sessionStorage.setItem(viewKey, '1');
+  apiCall('POST', '/api/conversations/' + id + '/view', {}).then(data => {
+    if (data && data.viewCount !== undefined) {
+      const c = DB.conversations.find(x => x.id === id);
+      if (c) { c.viewCount = data.viewCount; DB.save(); renderConversation(id); }
+    }
+  }).catch(() => {});
+}
+
 function renderConversation(id) {
   const conv = DB.conversations.find(c => c.id === id);
   if (!conv) { navigate('home'); return; }
 
-  const viewKey = 'viewed_' + id;
-  if (!sessionStorage.getItem(viewKey) && BACKEND_URL) {
-    sessionStorage.setItem(viewKey, '1');
-    apiCall('POST', '/api/conversations/' + id + '/view', {}).then(data => {
-      if (data && data.viewCount !== undefined) {
-        const c = DB.conversations.find(x => x.id === id);
-        if (c) { c.viewCount = data.viewCount; DB.save(); renderConversation(id); }
-      }
-    }).catch(() => {});
-  }
 
   const creator = DB.users.find(u => u.id === conv.creatorId);
   const isCreator = currentUser && currentUser.id === conv.creatorId;
@@ -3474,6 +3477,18 @@ async function resendVerificationTo(email) {
       loadSession();
       renderNav();
       navigate(_init.page, _init.id);
+      if (_init.page === 'conversation' && _init.id && BACKEND_URL) {
+        const viewKey = 'viewed_' + _init.id;
+        if (!sessionStorage.getItem(viewKey)) {
+          sessionStorage.setItem(viewKey, '1');
+          apiCall('POST', '/api/conversations/' + _init.id + '/view', {}).then(data => {
+            if (data && data.viewCount !== undefined) {
+              const c = DB.conversations.find(x => x.id === _init.id);
+              if (c) { c.viewCount = data.viewCount; DB.save(); renderConversation(_init.id); }
+            }
+          }).catch(() => {});
+        }
+      }
     });
   } else {
     navigate(_init.page, _init.id);
