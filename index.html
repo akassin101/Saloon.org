@@ -2051,7 +2051,7 @@ function renderPost(post, convId) {
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
         <div style="font-family:var(--font-ui);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Sources</div>
         <ol style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px">
-          ${post.sources.map(s => `<li style="font-family:var(--font-ui);font-size:13px"><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">${esc(s.label)}</a></li>`).join('')}
+          ${post.sources.map(s => `<li style="font-family:var(--font-ui);font-size:13px">${s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">${esc(s.label)}</a>` : esc(s.label)}</li>`).join('')}
         </ol>
       </div>` : '';
     contentHtml = `<div class="post-content" id="post-content-${post.id}">${renderAnnotatedContent(post.content, postComments)}</div>${sourcesHtml}`;
@@ -2245,7 +2245,7 @@ function addSourceField() {
   row.innerHTML = `
     <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);min-width:16px">${n}.</span>
     <input placeholder="Label (optional)" style="flex:0 0 140px;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-ui);font-size:13px;background:var(--bg);color:var(--text)" id="src-label-${n}">
-    <input placeholder="URL" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-ui);font-size:13px;background:var(--bg);color:var(--text)" id="src-url-${n}">
+    <input placeholder="URL (optional)" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-ui);font-size:13px;background:var(--bg);color:var(--text)" id="src-url-${n}">
     <button class="btn-ghost btn-sm" style="padding:4px 8px;font-size:12px;color:var(--muted)" onclick="document.getElementById('source-row-${n}').remove()">✕</button>
   `;
   list.appendChild(row);
@@ -2257,7 +2257,7 @@ function collectSources() {
     const n = row.id.replace('source-row-', '');
     const url = (document.getElementById('src-url-' + n)||{}).value?.trim();
     const label = (document.getElementById('src-label-' + n)||{}).value?.trim();
-    if (url) sources.push({ url, label: label || url });
+    if (url || label) sources.push({ url: url || '', label: label || url || '' });
   });
   return sources;
 }
@@ -2289,7 +2289,7 @@ function renderSourceEditor(post, convId) {
     <div id="src-edit-row-${i}" style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
       <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);min-width:16px">${i+1}.</span>
       <input id="src-edit-label-${i}" placeholder="Label (optional)" value="${esc(s.label === s.url ? '' : s.label)}" style="flex:0 0 140px;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-ui);font-size:13px;background:var(--bg);color:var(--text)">
-      <input id="src-edit-url-${i}" placeholder="URL" value="${esc(s.url)}" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-ui);font-size:13px;background:var(--bg);color:var(--text)">
+      <input id="src-edit-url-${i}" placeholder="URL (optional)" value="${esc(s.url)}" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-ui);font-size:13px;background:var(--bg);color:var(--text)">
       <button class="btn-ghost btn-sm" style="padding:4px 8px;font-size:12px;color:var(--muted)" onclick="document.getElementById('src-edit-row-${i}').remove()">✕</button>
     </div>`).join('');
   return `
@@ -2315,7 +2315,7 @@ function addSourceEditField(postId) {
   row.innerHTML = `
     <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);min-width:16px">·</span>
     <input id="src-edit-label-${n}" placeholder="Label (optional)" style="flex:0 0 140px;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-ui);font-size:13px;background:var(--bg);color:var(--text)">
-    <input id="src-edit-url-${n}" placeholder="URL" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-ui);font-size:13px;background:var(--bg);color:var(--text)">
+    <input id="src-edit-url-${n}" placeholder="URL (optional)" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-ui);font-size:13px;background:var(--bg);color:var(--text)">
     <button class="btn-ghost btn-sm" style="padding:4px 8px;font-size:12px;color:var(--muted)" onclick="document.getElementById('src-edit-row-${n}').remove()">✕</button>`;
   list.appendChild(row);
 }
@@ -2328,7 +2328,7 @@ function savePostSources(postId, convId) {
     const n = row.id.replace('src-edit-row-', '');
     const url = (document.getElementById('src-edit-url-' + n)||{}).value?.trim();
     const label = (document.getElementById('src-edit-label-' + n)||{}).value?.trim();
-    if (url) sources.push({ url, label: label || url });
+    if (url || label) sources.push({ url: url || '', label: label || url || '' });
   });
   post.sources = sources;
   DB.save();
