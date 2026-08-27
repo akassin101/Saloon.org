@@ -1886,7 +1886,7 @@ function renderConversation(id) {
     conv.viewCount = (conv.viewCount || 0) + 1;
     sessionStorage.setItem(viewKey, '1');
     DB.save();
-    bw('PUT', '/api/conversations/' + id + '/view', {});
+    bw('POST', '/api/conversations/' + id + '/view', {});
   }
 
   const creator = DB.users.find(u => u.id === conv.creatorId);

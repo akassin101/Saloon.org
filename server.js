@@ -400,13 +400,6 @@ app.patch('/api/conversations/:id', requireAuth, (req, res) => {
   res.json(conv);
 });
 
-app.put('/api/conversations/:id/view', (req, res) => {
-  const conv = db.conversations.find(c => c.id === req.params.id);
-  if (!conv) return res.status(404).json({ error: 'Not found.' });
-  conv.viewCount = (conv.viewCount || 0) + 1;
-  saveDB();
-  res.json({ viewCount: conv.viewCount });
-});
 
 app.put('/api/conversations/:id', requireAuth, (req, res) => {
   const conv = db.conversations.find(c => c.id === req.params.id);
