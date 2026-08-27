@@ -986,7 +986,7 @@
     </div>
     <div class="form-group">
       <label>Category</label>
-      <select id="new-conv-category">
+      <select id="new-conv-category" onchange="handleCategoryChange()">
         <option value="">— Select a category —</option>
         <option value="Politics">Politics</option>
         <option value="Religion">Religion</option>
@@ -998,7 +998,9 @@
         <option value="Economics">Economics</option>
         <option value="Culture">Culture</option>
         <option value="Technology">Technology</option>
+        <option value="Other">Other…</option>
       </select>
+      <input type="text" id="new-conv-category-custom" placeholder="Enter a category" style="display:none;margin-top:8px">
     </div>
     <div class="form-group">
       <label>Opening message</label>
@@ -2401,10 +2403,19 @@ function addParticipant(convId) {
 
 // ─── NEW CONVERSATION ─────────────────────────────────────────────────────────
 
+function handleCategoryChange() {
+  const sel = document.getElementById('new-conv-category');
+  const custom = document.getElementById('new-conv-category-custom');
+  custom.style.display = sel.value === 'Other' ? 'block' : 'none';
+  if (sel.value === 'Other') custom.focus();
+}
+
 function openNewConvModal() {
   if (!currentUser) { navigate('login'); return; }
   document.getElementById('new-conv-title').value = '';
   document.getElementById('new-conv-category').value = '';
+  document.getElementById('new-conv-category-custom').value = '';
+  document.getElementById('new-conv-category-custom').style.display = 'none';
   document.getElementById('new-conv-body').value = '';
   document.getElementById('new-conv-modal').classList.add('open');
   setTimeout(() => document.getElementById('new-conv-title').focus(), 50);
@@ -2416,10 +2427,13 @@ function submitNewConversation(asDraft = false) {
   const auth = getAuthUser();
   if (!auth) { navigate('login'); return; }
   const title = document.getElementById('new-conv-title').value.trim();
-  const category = document.getElementById('new-conv-category').value;
+  const rawCategory = document.getElementById('new-conv-category').value;
+  const customCategory = document.getElementById('new-conv-category-custom').value.trim();
+  const category = rawCategory === 'Other' ? customCategory : rawCategory;
   const body = document.getElementById('new-conv-body').value.trim();
   if (!title) { toast('Please give your conversation a title.'); return; }
-  if (!category) { toast('Please select a category.'); return; }
+  if (!rawCategory) { toast('Please select a category.'); return; }
+  if (rawCategory === 'Other' && !customCategory) { toast('Please enter a category name.'); return; }
   if (!body) { toast('Please write an opening message.'); return; }
 
   const convId = DB.uid();
