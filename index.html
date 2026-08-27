@@ -1350,10 +1350,28 @@ window.addEventListener('hashchange', function() {
 
 function copyConvLink() {
   const url = location.href;
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(url).then(() => toast('Link copied to clipboard.')).catch(() => prompt('Copy this link:', url));
+  const conv = DB.conversations.find(c => c.id === currentConvId);
+  const title = conv ? conv.title : 'Saloon conversation';
+  if (navigator.share) {
+    navigator.share({ title, url }).catch(() => {});
   } else {
-    prompt('Copy this link:', url);
+    // Fallback: show a small share popover
+    const subject = encodeURIComponent('Check out this conversation on Saloon');
+    const body = encodeURIComponent(title + '\n\n' + url);
+    const mailto = `mailto:?subject=${subject}&body=${body}`;
+    const existing = document.getElementById('share-popover');
+    if (existing) { existing.remove(); return; }
+    const pop = document.createElement('div');
+    pop.id = 'share-popover';
+    pop.style.cssText = 'position:fixed;bottom:80px;right:24px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:12px 16px;z-index:400;display:flex;flex-direction:column;gap:10px;min-width:180px;box-shadow:0 4px 20px rgba(0,0,0,.12)';
+    pop.innerHTML = `
+      <div style="font-family:var(--font-ui);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:2px">Share</div>
+      <a href="${mailto}" style="font-family:var(--font-ui);font-size:14px;color:var(--text);text-decoration:none" onclick="document.getElementById('share-popover').remove()">✉ Email</a>
+      <a href="sms:?body=${encodeURIComponent(title + ' ' + url)}" style="font-family:var(--font-ui);font-size:14px;color:var(--text);text-decoration:none" onclick="document.getElementById('share-popover').remove()">💬 Messages</a>
+      <button class="btn-ghost btn-sm" style="text-align:left" onclick="navigator.clipboard&&navigator.clipboard.writeText('${url.replace(/'/g,"\\'")}');toast('Link copied.');document.getElementById('share-popover').remove()">⎘ Copy link</button>
+    `;
+    document.body.appendChild(pop);
+    setTimeout(() => document.addEventListener('click', function h(e){ if(!pop.contains(e.target)){pop.remove();document.removeEventListener('click',h);} }), 50);
   }
 }
 
