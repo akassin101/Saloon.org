@@ -2091,7 +2091,10 @@ function renderConversation(id) {
 }
 
 const ADMIN_EMAIL = 'akassin101@gmail.com';
-function isAdmin() { const u = getAuthUser(); return u && u.email === ADMIN_EMAIL; }
+// Prefer the flag the server derived from the stored account; fall back to the
+// email for offline/local mode. Either way this only controls what the UI
+// offers — the server re-checks every privileged action.
+function isAdmin() { const u = getAuthUser(); return !!u && (u.isAdmin === true || u.email === ADMIN_EMAIL); }
 
 function renderPost(post, convId) {
   const author = DB.users.find(u => u.id === post.authorId);
@@ -2133,7 +2136,7 @@ function renderPost(post, convId) {
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
         <div style="font-family:var(--font-ui);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Sources</div>
         <ol style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px">
-          ${post.sources.map(s => `<li style="font-family:var(--font-ui);font-size:13px">${s.url ? `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">${esc(s.label)}</a>` : esc(s.label)}</li>`).join('')}
+          ${post.sources.map(s => { const u = safeUrl(s.url); return `<li style="font-family:var(--font-ui);font-size:13px">${u ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">${esc(s.label)}</a>` : esc(s.label)}</li>`; }).join('')}
         </ol>
       </div>` : '';
     const historyHtml = showingHistory && hasEdits ? `
@@ -2436,11 +2439,27 @@ function savePostEdit(postId, convId) {
   if (!content) { toast('Post cannot be empty.'); return; }
   const post = DB.posts.find(p => p.id === postId);
   if (post) {
+    // Optimistic update; the server records the authoritative edit history and
+    // enforces the edit window, so reconcile with whatever it returns.
+    const previous = post.content;
     if (!post.edits) post.edits = [];
-    post.edits.push({ content: post.content, editedAt: Date.now() });
+    post.edits.push({ content: previous, editedAt: Date.now() });
     post.content = content;
     DB.save();
-    bw('PUT', '/api/posts/' + postId, { content, edits: post.edits });
+    apiCall('PUT', '/api/posts/' + postId, { content })
+      .then(saved => {
+        if (!saved) return;
+        Object.assign(post, saved);
+        DB.save();
+        renderConversation(convId);
+      })
+      .catch(e => {
+        post.content = previous;
+        post.edits.pop();
+        DB.save();
+        toast(e.message || 'Could not save your edit.');
+        renderConversation(convId);
+      });
   }
   editingPostId = null;
   toast('Post updated.');
@@ -2532,15 +2551,24 @@ function declineJoinRequest(convId, userId) {
   renderConversation(convId);
 }
 
-function deleteConversation(convId) {
+async function deleteConversation(convId) {
   if (!isAdmin()) return;
   if (!confirm('Permanently delete this conversation and all its posts?')) return;
+  // Delete on the server FIRST — a local-only delete used to look successful and
+  // then silently reappear on the next reload when the server rejected it.
+  if (BACKEND_URL) {
+    try {
+      await apiCall('DELETE', '/api/conversations/' + convId, null);
+    } catch (e) {
+      toast(e.message || 'Could not delete that conversation.');
+      return;
+    }
+  }
   const idx = DB.conversations.findIndex(c => c.id === convId);
   if (idx !== -1) DB.conversations.splice(idx, 1);
   DB.posts = DB.posts.filter(p => p.conversationId !== convId);
   DB.comments = DB.comments.filter(c => c.conversationId !== convId);
   DB.save();
-  bw('DELETE', '/api/conversations/' + convId, null);
   toast('Conversation deleted.');
   navigate('home');
 }
@@ -2556,16 +2584,26 @@ function deleteConvDraft(convId) {
   renderProfile(getAuthUser().id);
 }
 
-function deleteOwnPost(postId, convId) {
+async function deleteOwnPost(postId, convId) {
   const post = DB.posts.find(p => p.id === postId);
   if (!post) return;
   const EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
-  if (!currentUser || currentUser.id !== post.authorId || (Date.now() - post.createdAt) >= EDIT_WINDOW_MS) return;
+  const mine = currentUser && currentUser.id === post.authorId
+    && (Date.now() - post.createdAt) < EDIT_WINDOW_MS;
+  if (!mine && !isAdmin()) return;
   if (!confirm('Delete this post?')) return;
+  if (BACKEND_URL) {
+    try {
+      await apiCall('DELETE', '/api/posts/' + postId, null);
+    } catch (e) {
+      toast(e.message || 'Could not delete that post.');
+      return;
+    }
+  }
   const idx = DB.posts.findIndex(p => p.id === postId);
   if (idx !== -1) DB.posts.splice(idx, 1);
+  DB.comments = DB.comments.filter(c => c.postId !== postId);
   DB.save();
-  bw('DELETE', '/api/posts/' + postId, null);
   toast('Post deleted.');
   renderConversation(convId);
 }
@@ -2747,7 +2785,7 @@ function saveCategory(convId, confirm) {
 
 // ─── PARTICIPANTS ─────────────────────────────────────────────────────────────
 
-function addParticipant(convId) {
+async function addParticipant(convId) {
   const inp = document.getElementById('add-participant-input');
   const email = inp.value.trim().toLowerCase();
   if (!email) return;
@@ -2758,36 +2796,39 @@ function addParticipant(convId) {
     toast('Only participants can add others.'); return;
   }
 
-  const target = DB.users.find(u => u.email === email);
-  if (!target) {
-    // No account — send an invitation
-    const alreadyInvited = (DB.invitations||[]).find(i => i.email === email && i.convId === convId);
-    if (alreadyInvited) { toast('An invitation has already been sent to ' + email + '.'); return; }
+  // Other users' email addresses are deliberately not exposed to the client, so
+  // the server decides whether this address belongs to an existing account.
+  let res;
+  try {
+    res = await apiCall('POST', '/api/conversations/' + convId + '/participants', { email });
+  } catch (e) {
+    toast(e.message || 'Could not add that person.');
+    return;
+  }
+  inp.value = '';
 
-    DB.invitations = DB.invitations || [];
-    DB.invitations.push({ email, convId, invitedBy: auth.id, invitedAt: Date.now() });
+  if (res && res.added && res.user) {
+    if (!DB.users.some(u => u.id === res.user.id)) DB.users.push(res.user);
+    if (!conv.participants.includes(res.user.id)) conv.participants.push(res.user.id);
     DB.save();
-    bw('POST', '/api/conversations/' + convId + '/participants', { email });
-    inp.value = '';
-
-    // Open the user's email client with a pre-filled invitation
-    const subject = encodeURIComponent('You\'ve been invited to join a conversation on Saloon');
-    const body = encodeURIComponent(
-      'Hi,\n\n' + displayName(auth) + ' has invited you to participate in a conversation on Saloon titled "' + conv.title + '".\n\nSaloon is a platform for thoughtful long-form conversation. Create a free account — you\'ll be added to this conversation automatically when you sign up with this email address.\n\n— Saloon\n\nconversation reimagined'
-    );
-    window.open('mailto:' + email + '?subject=' + subject + '&body=' + body, '_self');
-
-    toast('Invitation sent to ' + email + '.');
+    toast(displayName(res.user) + ' added to conversation.');
     renderConversation(convId);
     return;
   }
 
-  if ((conv.participants||[]).includes(target.id)) { toast(displayName(target) + ' is already a participant.'); return; }
-  conv.participants.push(target.id);
+  // No account yet — an invitation was recorded server-side.
+  DB.invitations = DB.invitations || [];
+  if (!DB.invitations.some(i => i.email === email && i.convId === convId))
+    DB.invitations.push({ email, convId, invitedBy: auth.id, invitedAt: Date.now() });
   DB.save();
-  bw('POST', '/api/conversations/' + convId + '/participants', { email });
-  toast(displayName(target) + ' added to conversation.');
-  inp.value = '';
+
+  const subject = encodeURIComponent('You\'ve been invited to join a conversation on Saloon');
+  const body = encodeURIComponent(
+    'Hi,\n\n' + displayName(auth) + ' has invited you to participate in a conversation on Saloon titled "' + conv.title + '".\n\nSaloon is a platform for thoughtful long-form conversation. Create a free account — you\'ll be added to this conversation automatically when you sign up with this email address.\n\n— Saloon\n\nconversation reimagined'
+  );
+  window.open('mailto:' + email + '?subject=' + subject + '&body=' + body, '_self');
+
+  toast('Invitation sent to ' + email + '.');
   renderConversation(convId);
 }
 
@@ -3293,6 +3334,20 @@ const _escMap = { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;
 function esc(str) {
   if (!str) return '';
   return String(str).replace(/[&<>"']/g, c => _escMap[c]);
+}
+
+// esc() escapes characters, not schemes — a "javascript:" href survives it intact.
+// Any user-supplied URL must pass through here before becoming an href.
+function safeUrl(url) {
+  if (!url) return '';
+  let s = String(url).trim();
+  if (!s) return '';
+  // A bare "example.com" is meant as an external link, not a path on this site.
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) s = 'https://' + s;
+  try {
+    const p = new URL(s);
+    return (p.protocol === 'http:' || p.protocol === 'https:') ? p.href : '';
+  } catch (e) { return ''; }
 }
 
 function timeAgo(ts) {

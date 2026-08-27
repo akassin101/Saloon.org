@@ -145,7 +145,7 @@ function render() {
       : '';
     const delBtn = `<button class="btn-sm btn-delete" onclick="del('${u.id}')">Delete</button>`;
     const joined = new Date(u.createdAt).toLocaleDateString();
-    const idFile = u.idFileName ? `· ID: ${u.idFileName}` : '';
+    const idFile = u.idFileName ? `· ID: ${esc(u.idFileName)}` : '';
     return `<div class="card" id="u-${u.id}">
       <div class="card-info">
         <div class="name">${esc(u.firstName)} ${esc(u.lastName)} ${badge}</div>
