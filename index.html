@@ -1873,7 +1873,12 @@ function renderConversation(id) {
   const isCreator = currentUser && currentUser.id === conv.creatorId;
   const isParticipant = currentUser && (conv.participants || []).includes(currentUser.id);
   const posts = DB.posts.filter(p => p.conversationId === id).sort((a,b) => a.createdAt - b.createdAt);
-  const convComments = DB.comments.filter(c => c.conversationId === id && !c.postId).sort((a,b) => a.createdAt - b.createdAt);
+  const convParticipants = new Set((conv && conv.participants) || []);
+  const convComments = DB.comments.filter(c => c.conversationId === id && !c.postId).sort((a,b) => {
+    const aPoster = convParticipants.has(a.authorId) ? 0 : 1;
+    const bPoster = convParticipants.has(b.authorId) ? 0 : 1;
+    return aPoster - bPoster || a.createdAt - b.createdAt;
+  });
   const allComments = DB.comments.filter(c => c.conversationId === id);
   const userLiked = currentUser && (conv.likes||[]).includes(currentUser.id);
   const userDisliked = currentUser && (conv.dislikes||[]).includes(currentUser.id);
@@ -2024,7 +2029,13 @@ function isAdmin() { const u = getAuthUser(); return u && u.email === ADMIN_EMAI
 
 function renderPost(post, convId) {
   const author = DB.users.find(u => u.id === post.authorId);
-  const postComments = DB.comments.filter(c => c.postId === post.id).sort((a,b) => a.createdAt - b.createdAt);
+  const conv = DB.conversations.find(c => c.id === post.conversationId);
+  const participants = new Set((conv && conv.participants) || []);
+  const postComments = DB.comments.filter(c => c.postId === post.id).sort((a,b) => {
+    const aPoster = participants.has(a.authorId) ? 0 : 1;
+    const bPoster = participants.has(b.authorId) ? 0 : 1;
+    return aPoster - bPoster || a.createdAt - b.createdAt;
+  });
   const editing = isAdmin() && editingPostId === post.id;
   const editingSources = currentUser && currentUser.id === post.authorId && editingSourcesPostId === post.id;
 
