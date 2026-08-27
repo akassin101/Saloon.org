@@ -1443,7 +1443,7 @@ function renderHome() {
 
       <div class="category-filter">
         <span class="cat-pill ${feedCategory===''?'active':''}" onclick="setCategoryFilter('')">All</span>
-        ${CATEGORIES.map(c => `<span class="cat-pill ${feedCategory===c?'active':''}" onclick="setCategoryFilter('${c}')">${c}</span>`).join('')}
+        ${[...new Set([...CATEGORIES, ...DB.conversations.filter(c=>!c.draft).map(c=>c.category).filter(Boolean)])].map(c => `<span class="cat-pill ${feedCategory===c?'active':''}" onclick="setCategoryFilter('${c}')">${c}</span>`).join('')}
       </div>
 
       <div class="feed-tabs">
@@ -1854,6 +1854,7 @@ async function doRegister() {
 
 let editingTitle = false;
 let editingCategory = false;
+let editingPostId = null;
 let commentView = 'inline'; // 'inline' | 'sidebar' | 'hidden'
 
 function renderConversation(id) {
@@ -2012,17 +2013,35 @@ function renderConversation(id) {
   setupTextSelection(id);
 }
 
+const ADMIN_EMAIL = 'akassin101@gmail.com';
+function isAdmin() { const u = getAuthUser(); return u && u.email === ADMIN_EMAIL; }
+
 function renderPost(post, convId) {
   const author = DB.users.find(u => u.id === post.authorId);
   const postComments = DB.comments.filter(c => c.postId === post.id).sort((a,b) => a.createdAt - b.createdAt);
+  const editing = isAdmin() && editingPostId === post.id;
 
   const authorLine = `
     <div class="post-author">
       <span>${nameLink(author, 'font-weight:500')} · ${timeAgo(post.createdAt)}</span>
-      ${currentUser ? `<button class="post-action-btn" onclick="openAnnotateModal('${post.id}','${convId}',null)">◎ comment</button>` : ''}
+      <div style="display:flex;gap:6px;align-items:center">
+        ${isAdmin() && !editing ? `<button class="post-action-btn" style="opacity:.5" onclick="editingPostId='${post.id}';renderConversation('${convId}')">edit</button>` : ''}
+        ${currentUser ? `<button class="post-action-btn" onclick="openAnnotateModal('${post.id}','${convId}',null)">◎ comment</button>` : ''}
+      </div>
     </div>
   `;
-  const contentHtml = `<div class="post-content" id="post-content-${post.id}">${renderAnnotatedContent(post.content, postComments)}</div>`;
+
+  let contentHtml;
+  if (editing) {
+    contentHtml = `
+      <textarea id="post-edit-textarea" style="width:100%;min-height:120px;padding:12px;border:1px solid var(--border);border-radius:4px;font-family:var(--font-body);font-size:15px;line-height:1.7;background:var(--bg);color:var(--text);resize:vertical;margin-bottom:8px">${esc(post.content)}</textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn-ghost btn-sm" onclick="editingPostId=null;renderConversation('${convId}')">Cancel</button>
+        <button class="btn-primary btn-sm" onclick="savePostEdit('${post.id}','${convId}')">Save</button>
+      </div>`;
+  } else {
+    contentHtml = `<div class="post-content" id="post-content-${post.id}">${renderAnnotatedContent(post.content, postComments)}</div>`;
+  }
 
   let inner;
   if (commentView === 'sidebar') {
@@ -2042,10 +2061,12 @@ function renderPost(post, convId) {
     inner = `
       ${authorLine}
       ${contentHtml}
-      <div class="post-actions">
-        ${postComments.length > 0 ? `<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">◎ ${postComments.length} comment${postComments.length!==1?'s':''}</span>` : ''}
-      </div>
-      ${postComments.length > 0 ? `<div style="margin-top:12px">${postComments.map(renderAnnotationBubble).join('')}</div>` : ''}
+      ${!editing ? `
+        <div class="post-actions">
+          ${postComments.length > 0 ? `<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">◎ ${postComments.length} comment${postComments.length!==1?'s':''}</span>` : ''}
+        </div>
+        ${postComments.length > 0 ? `<div style="margin-top:12px">${postComments.map(renderAnnotationBubble).join('')}</div>` : ''}
+      ` : ''}
     `;
   }
 
@@ -2213,6 +2234,18 @@ function submitPost(convId) {
   DB.save();
   bw('POST', '/api/posts', post);
   toast('Contributed.');
+  renderConversation(convId);
+}
+
+function savePostEdit(postId, convId) {
+  if (!isAdmin()) return;
+  const el = document.getElementById('post-edit-textarea');
+  const content = el ? el.value.trim() : '';
+  if (!content) { toast('Post cannot be empty.'); return; }
+  const post = DB.posts.find(p => p.id === postId);
+  if (post) { post.content = content; DB.save(); bw('PUT', '/api/posts/' + postId, { content }); }
+  editingPostId = null;
+  toast('Post updated.');
   renderConversation(convId);
 }
 
