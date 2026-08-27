@@ -37,12 +37,6 @@ const app = express();
 
 app.set('trust proxy', 1);
 app.use(helmet());
-app.use(rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false
-}));
 const PORT        = process.env.PORT || 3000;
 const SECRET      = process.env.JWT_SECRET || 'saloon-dev-secret-change-in-production';
 const DATA        = process.env.DATA_PATH || path.join(__dirname, 'data.json');
@@ -121,6 +115,12 @@ function uid() {
 // ─── MIDDLEWARE ───────────────────────────────────────────────────────────────
 
 app.use(cors({ origin: ORIGIN }));
+app.use(rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false
+}));
 app.use(express.json({ limit: '10mb' }));
 
 // Serve the frontend file from the parent directory

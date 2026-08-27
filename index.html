@@ -1883,12 +1883,15 @@ function trackView(id) {
   const viewKey = 'viewed_' + id;
   if (sessionStorage.getItem(viewKey)) return;
   sessionStorage.setItem(viewKey, '1');
-  apiCall('POST', '/api/conversations/' + id + '/view', {}).then(data => {
-    if (data && data.viewCount !== undefined) {
-      const c = DB.conversations.find(x => x.id === id);
-      if (c) { c.viewCount = data.viewCount; DB.save(); renderConversation(id); }
-    }
-  }).catch(() => {});
+  fetch(BACKEND_URL + '/api/conversations/' + id + '/view', { method: 'POST' })
+    .then(r => r.ok ? r.json() : null)
+    .then(data => {
+      if (data && data.viewCount !== undefined) {
+        const c = DB.conversations.find(x => x.id === id);
+        if (c) { c.viewCount = data.viewCount; DB.save(); renderConversation(id); }
+      }
+    })
+    .catch(() => {});
 }
 
 function renderConversation(id) {
