@@ -171,8 +171,30 @@ function saveDB() {
   _saveTimer = setTimeout(flushDB, Math.max(0, Math.min(200, _saveDeadline - now)));
 }
 
+// ─── MIGRATIONS ───────────────────────────────────────────────────────────────
+// Each runs at most once; db.meta records which have already been applied.
+
+db.meta = db.meta || {};
+
 // Migrate existing users created before email verification was added
 db.users.forEach(u => { if (u.emailVerified === undefined) u.emailVerified = true; });
+
+// Before the pub() allow-list landed, GET /api/data served every user's
+// resetToken and emailVerifyToken to anonymous callers. Any token that existed
+// then must be treated as compromised, so burn them all once. Password reset
+// links issued before this deploy will stop working — users simply request a
+// new one.
+if (!db.meta.tokensPurgedAt) {
+  let purged = 0;
+  db.users.forEach(u => {
+    if (u.resetToken || u.resetTokenExpiry) { u.resetToken = null; u.resetTokenExpiry = null; purged++; }
+    // Only unverified accounts still need their verify token; reissue on demand.
+    if (u.emailVerifyToken && u.emailVerified) u.emailVerifyToken = null;
+  });
+  db.meta.tokensPurgedAt = Date.now();
+  console.log(`[migration] Invalidated potentially-exposed reset tokens for ${purged} user(s).`);
+}
+
 saveDB();
 
 function uid() {
@@ -423,16 +445,20 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
   const user = db.users.find(u => u.email === email?.toLowerCase()?.trim());
-  // One generic message for "no such account" and "wrong password" — a distinct
-  // response for each turns this endpoint into an account-enumeration oracle.
-  const GENERIC = 'Incorrect email or password.';
+  // One generic message for every failure mode — "no such account", "wrong
+  // password", and "that's a Google account" each turn this endpoint into an
+  // account-enumeration oracle if they answer differently. The hint about Google
+  // is shown to everyone, so it guides real users without confirming anything.
+  const GENERIC = 'Incorrect email or password. If you signed up with Google, use "Continue with Google" instead.';
   if (!user) {
     // Spend comparable time so response latency doesn't leak existence either.
     try { await bcrypt.hash(String(password || ''), 10); } catch(e) {}
     return res.status(400).json({ error: GENERIC });
   }
-  if (!user.passwordHash)
-    return res.status(400).json({ error: 'This account uses Google Sign-In. Please use the "Continue with Google" button.' });
+  if (!user.passwordHash) {
+    try { await bcrypt.hash(String(password || ''), 10); } catch(e) {}
+    return res.status(400).json({ error: GENERIC });
+  }
   const ok = await bcrypt.compare(password || '', user.passwordHash);
   if (!ok) return res.status(400).json({ error: GENERIC });
   if (!user.emailVerified)
