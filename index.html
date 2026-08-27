@@ -1882,11 +1882,15 @@ function renderConversation(id) {
   if (!conv) { navigate('home'); return; }
 
   const viewKey = 'viewed_' + id;
-  if (!sessionStorage.getItem(viewKey)) {
-    conv.viewCount = (conv.viewCount || 0) + 1;
+  if (!sessionStorage.getItem(viewKey) && BACKEND_URL) {
     sessionStorage.setItem(viewKey, '1');
-    DB.save();
-    bw('POST', '/api/conversations/' + id + '/view', {});
+    fetch(BACKEND_URL + '/api/conversations/' + id + '/view', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .then(r => r.json()).then(data => {
+        if (data.viewCount !== undefined) {
+          const c = DB.conversations.find(x => x.id === id);
+          if (c) { c.viewCount = data.viewCount; DB.save(); renderConversation(id); }
+        }
+      }).catch(() => {});
   }
 
   const creator = DB.users.find(u => u.id === conv.creatorId);
