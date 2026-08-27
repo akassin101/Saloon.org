@@ -1855,6 +1855,7 @@ async function doRegister() {
 let editingTitle = false;
 let editingCategory = false;
 let editingPostId = null;
+let editingSourcesPostId = null;
 let commentView = 'inline'; // 'inline' | 'sidebar' | 'hidden'
 
 function renderConversation(id) {
@@ -2025,6 +2026,7 @@ function renderPost(post, convId) {
   const author = DB.users.find(u => u.id === post.authorId);
   const postComments = DB.comments.filter(c => c.postId === post.id).sort((a,b) => a.createdAt - b.createdAt);
   const editing = isAdmin() && editingPostId === post.id;
+  const editingSources = currentUser && currentUser.id === post.authorId && editingSourcesPostId === post.id;
 
   const authorLine = `
     <div class="post-author">
@@ -2076,7 +2078,9 @@ function renderPost(post, convId) {
       ${!editing ? `
         <div class="post-actions">
           ${postComments.length > 0 ? `<span style="font-family:var(--font-ui);font-size:12px;color:var(--muted)">◎ ${postComments.length} comment${postComments.length!==1?'s':''}</span>` : ''}
+          ${currentUser && currentUser.id === post.authorId && !editingSources ? `<button class="post-action-btn" onclick="editingSourcesPostId='${post.id}';renderConversation('${convId}')">+ source</button>` : ''}
         </div>
+        ${editingSources ? renderSourceEditor(post, convId) : ''}
         ${postComments.length > 0 ? `<div style="margin-top:12px">${postComments.map(renderAnnotationBubble).join('')}</div>` : ''}
       ` : ''}
     `;
@@ -2277,6 +2281,60 @@ function submitPost(convId) {
   bw('POST', '/api/posts', post);
   sourceCount = 0;
   toast('Contributed.');
+  renderConversation(convId);
+}
+
+function renderSourceEditor(post, convId) {
+  const existing = (post.sources || []).map((s, i) => `
+    <div id="src-edit-row-${i}" style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);min-width:16px">${i+1}.</span>
+      <input id="src-edit-label-${i}" placeholder="Label (optional)" value="${esc(s.label === s.url ? '' : s.label)}" style="flex:0 0 140px;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-ui);font-size:13px;background:var(--bg);color:var(--text)">
+      <input id="src-edit-url-${i}" placeholder="URL" value="${esc(s.url)}" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-ui);font-size:13px;background:var(--bg);color:var(--text)">
+      <button class="btn-ghost btn-sm" style="padding:4px 8px;font-size:12px;color:var(--muted)" onclick="document.getElementById('src-edit-row-${i}').remove()">✕</button>
+    </div>`).join('');
+  return `
+    <div id="source-editor-${post.id}" style="margin-top:12px;padding:14px;border:1px solid var(--border);border-radius:4px;background:var(--bg)">
+      <div style="font-family:var(--font-ui);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:10px">Edit sources</div>
+      <div id="src-edit-list-${post.id}">${existing}</div>
+      <button class="btn-ghost btn-sm" style="font-size:12px;margin-bottom:12px" onclick="addSourceEditField('${post.id}')">+ Add source</button>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn-ghost btn-sm" onclick="editingSourcesPostId=null;renderConversation('${convId}')">Cancel</button>
+        <button class="btn-primary btn-sm" onclick="savePostSources('${post.id}','${convId}')">Save sources</button>
+      </div>
+    </div>`;
+}
+
+let srcEditCount = 1000;
+function addSourceEditField(postId) {
+  const list = document.getElementById('src-edit-list-' + postId);
+  if (!list) return;
+  const n = ++srcEditCount;
+  const row = document.createElement('div');
+  row.id = 'src-edit-row-' + n;
+  row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:6px';
+  row.innerHTML = `
+    <span style="font-family:var(--font-ui);font-size:12px;color:var(--muted);min-width:16px">·</span>
+    <input id="src-edit-label-${n}" placeholder="Label (optional)" style="flex:0 0 140px;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-ui);font-size:13px;background:var(--bg);color:var(--text)">
+    <input id="src-edit-url-${n}" placeholder="URL" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:3px;font-family:var(--font-ui);font-size:13px;background:var(--bg);color:var(--text)">
+    <button class="btn-ghost btn-sm" style="padding:4px 8px;font-size:12px;color:var(--muted)" onclick="document.getElementById('src-edit-row-${n}').remove()">✕</button>`;
+  list.appendChild(row);
+}
+
+function savePostSources(postId, convId) {
+  const post = DB.posts.find(p => p.id === postId);
+  if (!post) return;
+  const sources = [];
+  document.querySelectorAll(`#source-editor-${postId} [id^="src-edit-row-"]`).forEach(row => {
+    const n = row.id.replace('src-edit-row-', '');
+    const url = (document.getElementById('src-edit-url-' + n)||{}).value?.trim();
+    const label = (document.getElementById('src-edit-label-' + n)||{}).value?.trim();
+    if (url) sources.push({ url, label: label || url });
+  });
+  post.sources = sources;
+  DB.save();
+  bw('PUT', '/api/posts/' + postId, { sources });
+  editingSourcesPostId = null;
+  toast('Sources saved.');
   renderConversation(convId);
 }
 
