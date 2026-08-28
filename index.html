@@ -3,6 +3,26 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!--
+  GitHub Pages cannot set response headers, so the policy has to live here.
+  The app is one file of inline scripts and inline onclick handlers, so
+  script-src must permit 'unsafe-inline' and this cannot stop injected script
+  from running. What it does stop is the step that makes an XSS profitable:
+  connect-src and img-src are pinned, so injected code cannot beacon the JWT
+  out to an attacker's host. Tighten script-src only after the inline handlers
+  are gone.
+-->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'self';
+  script-src 'self' 'unsafe-inline' https://accounts.google.com;
+  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com;
+  font-src 'self' data: https://fonts.gstatic.com;
+  img-src 'self' data: https://accounts.google.com https://lh3.googleusercontent.com;
+  connect-src 'self' https://saloonorg-production.up.railway.app https://accounts.google.com;
+  frame-src https://accounts.google.com;
+  form-action 'self';
+  base-uri 'self';
+  object-src 'none'">
 <title>Saloon</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&display=swap">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -1829,13 +1849,14 @@ async function doRegister() {
       DB.save();
       // Show appropriate post-registration screen
       if (res.emailVerificationRequired) {
+        pendingVerifyEmail = res.user.email;
         document.getElementById('page-register').innerHTML = `
           <div class="container">
             <div class="auth-card" style="max-width:480px;text-align:center">
               <div style="font-size:48px;margin-bottom:16px">📬</div>
               <h2>Check your email</h2>
               <p class="auth-sub" style="margin-bottom:16px">We sent a verification link to <strong>${esc(res.user.email)}</strong>. Click it to activate your account.</p>
-              <p style="font-size:13px;color:var(--muted);font-family:var(--font-ui)">Didn't get it? <a href="#" onclick="resendVerificationTo('${esc(res.user.email)}');return false">Resend email</a></p>
+              <p style="font-size:13px;color:var(--muted);font-family:var(--font-ui)">Didn't get it? <a href="#" onclick="resendVerificationTo(pendingVerifyEmail);return false">Resend email</a></p>
             </div>
           </div>
         `;
@@ -1897,6 +1918,11 @@ function trackView(id) {
 function renderConversation(id) {
   const conv = DB.conversations.find(c => c.id === id);
   if (!conv) { navigate('home'); return; }
+  // A draft belongs on the sandbox page and only to its creator.
+  if (conv.draft) {
+    if (currentUser && conv.creatorId === currentUser.id) { navigate('draft', id); return; }
+    navigate('home'); return;
+  }
 
 
   const creator = DB.users.find(u => u.id === conv.creatorId);
@@ -2090,7 +2116,11 @@ function renderConversation(id) {
   setupTextSelection(id);
 }
 
+let pendingVerifyEmail = '';
 const ADMIN_EMAIL = 'akassin101@gmail.com';
+// Mirrors EDIT_WINDOW_MS in server.js. The server is authoritative; this only
+// decides whether the UI offers the control. Keep the two in sync.
+const EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 // Prefer the flag the server derived from the stored account; fall back to the
 // email for offline/local mode. Either way this only controls what the UI
 // offers — the server re-checks every privileged action.
@@ -2105,8 +2135,8 @@ function renderPost(post, convId) {
     const bPoster = participants.has(b.authorId) ? 0 : 1;
     return aPoster - bPoster || a.createdAt - b.createdAt;
   });
-  const EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
-  const withinEditWindow = currentUser && currentUser.id === post.authorId && (Date.now() - post.createdAt) < EDIT_WINDOW_MS;
+  const withinEditWindow = currentUser && currentUser.id === post.authorId
+    && (Date.now() - (post.publishedAt || post.createdAt)) < EDIT_WINDOW_MS;
   const editing = (isAdmin() || withinEditWindow) && editingPostId === post.id;
   const editingSources = currentUser && currentUser.id === post.authorId && editingSourcesPostId === post.id;
   const showingHistory = viewingHistoryPostId === post.id;
@@ -2433,7 +2463,14 @@ function savePostSources(postId, convId) {
 }
 
 function savePostEdit(postId, convId) {
-  if (!isAdmin()) return;
+  // The edit control is offered to admins AND to authors inside the 24h window
+  // (see renderPost); gating the save on isAdmin() alone silently discarded
+  // every edit a normal author made.
+  const target = DB.posts.find(p => p.id === postId);
+  if (!target) return;
+  const authorInWindow = currentUser && currentUser.id === target.authorId
+    && (Date.now() - (target.publishedAt || target.createdAt)) < EDIT_WINDOW_MS;
+  if (!isAdmin() && !authorInWindow) return;
   const el = document.getElementById('post-edit-textarea');
   const content = el ? el.value.trim() : '';
   if (!content) { toast('Post cannot be empty.'); return; }
@@ -2587,9 +2624,8 @@ function deleteConvDraft(convId) {
 async function deleteOwnPost(postId, convId) {
   const post = DB.posts.find(p => p.id === postId);
   if (!post) return;
-  const EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
   const mine = currentUser && currentUser.id === post.authorId
-    && (Date.now() - post.createdAt) < EDIT_WINDOW_MS;
+    && (Date.now() - (post.publishedAt || post.createdAt)) < EDIT_WINDOW_MS;
   if (!mine && !isAdmin()) return;
   if (!confirm('Delete this post?')) return;
   if (BACKEND_URL) {
@@ -2623,6 +2659,8 @@ function deleteDraft(postId) {
 function renderDraftSandbox(convId) {
   const conv = DB.conversations.find(c => c.id === convId);
   if (!conv || !conv.draft) { navigate('home'); return; }
+  // Only the creator may open the sandbox; its inputs write straight to the draft.
+  if (!currentUser || conv.creatorId !== currentUser.id) { navigate('home'); return; }
   const openingPost = DB.posts.find(p => p.conversationId === convId && !p.parentId);
   const sandboxPosts = DB.posts.filter(p => p.conversationId === convId && p.parentId && !p.parentId.startsWith('comment'));
 
@@ -2684,7 +2722,8 @@ function renderDraftSandbox(convId) {
 
 function autoSaveDraftTitle(convId, val) {
   const conv = DB.conversations.find(c => c.id === convId);
-  if (conv) { conv.title = val; DB.save(); }
+  // Was local-only, so a draft title silently reverted on the next load.
+  if (conv) { conv.title = val; DB.save(); bw('PUT', '/api/conversations/' + convId, { title: val }); }
 }
 
 function autoSaveDraftBody(convId) {
@@ -3036,7 +3075,7 @@ function renderProfile(userId) {
 
       <div class="profile-header">
         <div class="profile-avatar clickable" onclick="${isOwn ? 'document.getElementById(\'profile-photo-input\').click()' : (user.photo ? `openLightbox('${user.id}')` : '')}">
-          ${user.photo ? `<img src="${user.photo}" alt="Profile photo">` : esc(initials(user))}
+          ${safeImage(user.photo) ? `<img src="${esc(safeImage(user.photo))}" alt="Profile photo">` : esc(initials(user))}
         </div>
         <div class="profile-info">
           <div class="profile-name">${esc(displayName(user))}</div>
@@ -3070,7 +3109,7 @@ function renderProfile(userId) {
 function renderFollowRow(user) {
   return `
     <div class="follow-row">
-      <div class="follow-avatar">${user.photo ? `<img src="${user.photo}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">` : esc(initials(user))}</div>
+      <div class="follow-avatar">${safeImage(user.photo) ? `<img src="${esc(safeImage(user.photo))}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">` : esc(initials(user))}</div>
       <div class="follow-info">
         <div class="follow-name" onclick="navigate('profile','${user.id}')">${esc(displayName(user))}</div>
         ${user.bio ? `<div class="follow-bio">${esc(user.bio.slice(0, 80))}${user.bio.length > 80 ? '…' : ''}</div>` : ''}
@@ -3115,7 +3154,7 @@ function handleProfilePhotoUpload(e) {
 function openLightbox(userId) {
   const user = DB.users.find(u => u.id === userId);
   if (!user || !user.photo) return;
-  document.getElementById('photo-lightbox-img').src = user.photo;
+  document.getElementById('photo-lightbox-img').src = safeImage(user.photo);
   document.getElementById('photo-lightbox').classList.add('open');
 }
 
@@ -3334,6 +3373,15 @@ const _escMap = { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#039;
 function esc(str) {
   if (!str) return '';
   return String(str).replace(/[&<>"']/g, c => _escMap[c]);
+}
+
+// Profile photos are data URIs rendered into an <img src>. Anything else is
+// dropped: an arbitrary string here breaks out of the attribute and executes.
+const DATA_IMAGE_RE = /^data:image\/(?:png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+function safeImage(value) {
+  if (typeof value !== 'string') return '';
+  const s = value.trim();
+  return DATA_IMAGE_RE.test(s) ? s : '';
 }
 
 // esc() escapes characters, not schemes — a "javascript:" href survives it intact.

@@ -52,6 +52,8 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID
 
 // How long after posting an author may still edit or delete their own post.
 const EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
+// Must match the '24 hours' the verification email promises.
+const EMAIL_VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
 
 // ─── SECRET GUARDS ────────────────────────────────────────────────────────────
 // Refuse to boot in production with the public placeholder secrets. These values
@@ -73,6 +75,10 @@ if (IS_PROD) {
     console.error('\n  FATAL: JWT_SECRET and ADMIN_SECRET must be different values.\n');
     process.exit(1);
   }
+  // Without this the CORS origin silently falls back to '*' if the env var is
+  // ever dropped from a redeploy or a new environment.
+  if (!process.env.FRONTEND_ORIGIN)
+    console.warn('  WARNING: FRONTEND_ORIGIN is unset — CORS is falling back to "*".');
 }
 
 // ─── EMAIL ─────────────────────────────────────────────────────────────────────
@@ -203,9 +209,45 @@ function uid() {
 
 // idFileName is user-supplied and is rendered in the admin panel. Reduce it to a
 // plain filename so it can never carry markup, path separators, or unbounded length.
+// Per-address throttle for anything that sends mail. The IP-based limiter keys
+// on a spoofable header, so on its own it does not stop someone from bombing one
+// person's inbox (and burning Resend quota and sender reputation) by rotating
+// X-Forwarded-For. Keyed on the target address, which cannot be rotated.
+const _mailSends = new Map();
+const MAIL_WINDOW_MS = 15 * 60 * 1000;
+const MAIL_MAX_PER_WINDOW = 3;
+
+function mailAllowed(email) {
+  const now = Date.now();
+  if (_mailSends.size > 10000) {
+    for (const [k, v] of _mailSends) if (now - v.first > MAIL_WINDOW_MS) _mailSends.delete(k);
+  }
+  const rec = _mailSends.get(email);
+  if (!rec || now - rec.first > MAIL_WINDOW_MS) {
+    _mailSends.set(email, { first: now, count: 1 });
+    return true;
+  }
+  if (rec.count >= MAIL_MAX_PER_WINDOW) return false;
+  rec.count++;
+  return true;
+}
+
 function safeFileName(name) {
   if (typeof name !== 'string') return '';
   return name.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120);
+}
+
+// Profile photos are stored inline as data URIs and rendered into an <img src>.
+// Anything that is not a well-formed base64 image is rejected outright: an
+// arbitrary string here becomes attribute-injection at every render site.
+// The pattern is linear (one character class, one quantifier) so it cannot
+// backtrack pathologically on a multi-megabyte input.
+const DATA_IMAGE_RE = /^data:image\/(?:png|jpeg|jpg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+
+function safeImage(value) {
+  if (typeof value !== 'string') return '';
+  const s = value.trim();
+  return DATA_IMAGE_RE.test(s) ? s : '';
 }
 
 // Source URLs are optional and become href attributes. Only http(s) may through —
@@ -266,25 +308,57 @@ app.use(rateLimit({ ...limiterBase, max: 1000 }));
 
 app.use(express.json({ limit: '10mb' }));
 
+// Handlers destructure req.body directly. body-parser only sets req.body when
+// the Content-Type actually matches, so a POST with a missing or non-JSON
+// Content-Type leaves it undefined — and destructuring undefined inside an
+// async handler becomes an unhandled rejection, which exits the process on
+// modern Node. One unauthenticated request could take the whole site down.
+app.use((req, res, next) => {
+  if (req.body === undefined || req.body === null || typeof req.body !== 'object')
+    req.body = {};
+  next();
+});
+
 // NOTE: do NOT serve a directory here. The frontend is hosted on GitHub Pages,
 // and an earlier version served path.join(__dirname, '..') — which resolves to
 // the filesystem root in the container, exposing data.json and everything else.
 
-// Auth middleware — hard-fails with 401
+// Auth middleware — hard-fails with 401.
+// A valid signature is NOT sufficient. The token is a 30-day bearer credential
+// with no revocation list, so every request must also confirm the account still
+// exists and is still allowed to act — otherwise deleting a user leaves them
+// posting for up to 30 days, and an unverified signup can write immediately.
 function requireAuth(req, res, next) {
   const h = req.headers.authorization;
   if (!h || !h.startsWith('Bearer ')) return res.status(401).json({ error: 'Not authenticated.' });
+  let claims;
   try {
-    req.user = jwt.verify(h.slice(7), SECRET);
-    next();
-  } catch(e) { res.status(401).json({ error: 'Session expired. Please sign in again.' }); }
+    claims = jwt.verify(h.slice(7), SECRET);
+  } catch(e) { return res.status(401).json({ error: 'Session expired. Please sign in again.' }); }
+
+  const user = db.users.find(u => u.id === claims.id);
+  if (!user) return res.status(401).json({ error: 'This account no longer exists.' });
+  if (!user.emailVerified)
+    return res.status(403).json({
+      error: 'Please verify your email before continuing. Check your inbox for a verification link.',
+      emailVerificationRequired: true
+    });
+
+  req.user    = claims;
+  req.account = user;
+  next();
 }
 
-// Auth middleware — passes through without a token (req.user may be undefined)
+// Auth middleware — passes through without a token (req.user may be undefined).
+// A token for a deleted account is treated as anonymous rather than trusted.
 function optionalAuth(req, res, next) {
   const h = req.headers.authorization;
   if (h && h.startsWith('Bearer ')) {
-    try { req.user = jwt.verify(h.slice(7), SECRET); } catch(e) {}
+    try {
+      const claims = jwt.verify(h.slice(7), SECRET);
+      const user = db.users.find(u => u.id === claims.id);
+      if (user) { req.user = claims; req.account = user; }
+    } catch(e) {}
   }
   next();
 }
@@ -298,8 +372,10 @@ function isSiteAdmin(req) {
   return !!u && u.email === ADMIN_EMAIL;
 }
 
+// Measured from publication where known, so time spent as an unpublished draft
+// doesn't eat into the author's editing window.
 function withinEditWindow(item) {
-  return Date.now() - (item.createdAt || 0) <= EDIT_WINDOW_MS;
+  return Date.now() - (item.publishedAt || item.createdAt || 0) <= EDIT_WINDOW_MS;
 }
 
 // Public projection of a user. This is an ALLOW-LIST on purpose: a deny-list
@@ -428,6 +504,7 @@ app.post('/api/auth/register', async (req, res) => {
     googleId: googleId || null,
     emailVerified: !!googleId,
     emailVerifyToken,
+    emailVerifyTokenExpiry: emailVerifyToken ? Date.now() + EMAIL_VERIFY_TTL_MS : null,
     idFileName: safeFileName(idFileName),
     idSubmitted: !!idFileName,
     verified: false,
@@ -489,9 +566,13 @@ app.post('/api/auth/verify-email', (req, res) => {
   const { token } = req.body;
   if (!token) return res.status(400).json({ error: 'Token is required.' });
   const user = db.users.find(u => u.emailVerifyToken === token);
-  if (!user) return res.status(400).json({ error: 'Invalid or expired verification link.' });
+  // The email promises this link expires in 24 hours, and it must actually do
+  // so — otherwise an old message recovered years later still mints a session.
+  if (!user || !user.emailVerifyTokenExpiry || user.emailVerifyTokenExpiry < Date.now())
+    return res.status(400).json({ error: 'Invalid or expired verification link.' });
   user.emailVerified = true;
   user.emailVerifyToken = null;
+  user.emailVerifyTokenExpiry = null;
   saveDB();
   const jwt_token = jwt.sign({ id: user.id }, SECRET, { expiresIn: '30d' });
   res.json({ user: pubSelf(user), token: jwt_token });
@@ -501,8 +582,10 @@ app.post('/api/auth/resend-verification', async (req, res) => {
   const { email } = req.body;
   const user = db.users.find(u => u.email === email?.toLowerCase()?.trim());
   if (!user || user.emailVerified) return res.json({ ok: true }); // silent — don't leak info
+  if (!mailAllowed(user.email)) return res.json({ ok: true });     // silent throttle
   const newToken = crypto.randomBytes(32).toString('hex');
   user.emailVerifyToken = newToken;
+  user.emailVerifyTokenExpiry = Date.now() + EMAIL_VERIFY_TTL_MS;
   saveDB();
   const verifyUrl = `${SITE_URL}?verify=${newToken}`;
   await sendMail(user.email, 'Verify your Saloon email', `
@@ -518,6 +601,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   const user = db.users.find(u => u.email === email?.toLowerCase()?.trim());
   res.json({ ok: true }); // always respond ok — don't leak whether email exists
   if (!user) return;
+  if (!mailAllowed(user.email)) return; // silent throttle — don't bomb an inbox
   const resetToken = crypto.randomBytes(32).toString('hex');
   user.resetToken = resetToken;
   user.resetTokenExpiry = Date.now() + 60 * 60 * 1000; // 1 hour
@@ -562,7 +646,17 @@ app.get('/api/data', optionalAuth, (req, res) => {
     users:         db.users.map(pub),
     conversations: db.conversations.filter(c => !c.draft || c.creatorId === userId),
     posts:         db.posts.filter(p => !p.draft || p.authorId === userId),
-    comments:      db.comments,
+    // Comments quote the text they annotate, so an unfiltered list hands out
+    // excerpts of unpublished drafts even though the draft itself is hidden.
+    comments: db.comments.filter(c => {
+      const conv = db.conversations.find(x => x.id === c.conversationId);
+      if (!conv) return false;
+      if (conv.draft && conv.creatorId !== userId) return false;
+      if (!c.postId) return true;
+      const post = db.posts.find(p => p.id === c.postId);
+      if (!post) return false;
+      return !post.draft || post.authorId === userId;
+    }),
     // Invitations carry email addresses of people who may not even have an
     // account — only show them to participants of the conversation involved.
     invitations:   userId
@@ -580,7 +674,14 @@ app.post('/api/conversations', requireAuth, (req, res) => {
   const { title, category, content, draft } = req.body;
   if (!title || !category || !content)
     return res.status(400).json({ error: 'title, category, and content are required.' });
-  if (title.length > 200)   return res.status(400).json({ error: 'Title too long (max 200 chars).' });
+  // These MUST be type-checked before .length. On a non-string, .length is
+  // either undefined (so `> 20000` is false) or an array's element count, and
+  // either way a multi-megabyte payload slips past the cap and is then served
+  // to every visitor by /api/data.
+  if (typeof title !== 'string' || typeof category !== 'string' || typeof content !== 'string')
+    return res.status(400).json({ error: 'title, category, and content must be text.' });
+  if (title.length > 200)     return res.status(400).json({ error: 'Title too long (max 200 chars).' });
+  if (category.length > 60)   return res.status(400).json({ error: 'Category too long (max 60 chars).' });
   if (content.length > 20000) return res.status(400).json({ error: 'Content too long (max 20 000 chars).' });
 
   const conv = {
@@ -710,6 +811,10 @@ app.post('/api/conversations/:id/vote', requireAuth, (req, res) => {
   if (!conv) return res.status(404).json({ error: 'Not found.' });
   const userId = req.user.id;
   const { type } = req.body;
+  // Anything that wasn't the string 'like' used to fall through to dislike, so
+  // a malformed request silently registered the opposite of nothing.
+  if (type !== 'like' && type !== 'dislike')
+    return res.status(400).json({ error: "type must be 'like' or 'dislike'." });
   conv.likes    = conv.likes    || [];
   conv.dislikes = conv.dislikes || [];
 
@@ -760,7 +865,7 @@ app.post('/api/conversations/:id/participants', requireAuth, (req, res) => {
 
 app.post('/api/posts', requireAuth, (req, res) => {
   const { conversationId, content, draft } = req.body;
-  if (!content || content.length > 20000)
+  if (!content || typeof content !== 'string' || content.length > 20000)
     return res.status(400).json({ error: 'Content required and must be under 20 000 chars.' });
   const conv = db.conversations.find(c => c.id === conversationId);
   if (!conv) return res.status(404).json({ error: 'Conversation not found.' });
@@ -782,6 +887,13 @@ app.put('/api/posts/:id', requireAuth, (req, res) => {
 
   const { content, draft, sources } = req.body;
 
+  // Un-publishing must be rejected BEFORE anything else. Without this, the edit
+  // window is trivially bypassed: PUT {draft:true} is unchecked, and the content
+  // guard below short-circuits on !post.draft, so a two-request sequence lets an
+  // author silently rewrite or delete a post of any age.
+  if (draft !== undefined && !!draft && !post.draft && !admin)
+    return res.status(403).json({ error: 'A published post cannot be returned to draft.' });
+
   if (content !== undefined) {
     if (typeof content !== 'string' || !content || content.length > 20000)
       return res.status(400).json({ error: 'Invalid content.' });
@@ -796,7 +908,13 @@ app.put('/api/posts/:id', requireAuth, (req, res) => {
     }
   }
 
-  if (draft !== undefined) post.draft = !!draft;
+  if (draft !== undefined) {
+    const nowPublished = post.draft && !draft;
+    post.draft = !!draft;
+    // The window runs from publication, not creation, so a post that sat as a
+    // draft for a week still gets its full 24 hours once it goes live.
+    if (nowPublished) post.publishedAt = Date.now();
+  }
 
   // Sources may be revised at any time, by design.
   if (sources !== undefined) {
@@ -867,12 +985,52 @@ app.patch('/api/users/:id', requireAuth, (req, res) => {
     return res.status(403).json({ error: 'You can only edit your own profile.' });
   const user = db.users.find(u => u.id === req.params.id);
   if (!user) return res.status(404).json({ error: 'User not found.' });
-  if (req.body.bio && req.body.bio.length > 1000)
-    return res.status(400).json({ error: 'Bio too long (max 1 000 chars).' });
-  if (req.body.photo !== undefined && typeof req.body.photo === 'string' && req.body.photo.length > 5 * 1024 * 1024)
-    return res.status(400).json({ error: 'Photo too large (max 5 MB).' });
-  const allowed = ['bio', 'credentials', 'interests', 'recommendedBooks', 'recommendedFilms', 'photo'];
-  allowed.forEach(k => { if (req.body[k] !== undefined) user[k] = req.body[k]; });
+  const b = req.body;
+
+  if (b.bio !== undefined) {
+    if (typeof b.bio !== 'string') return res.status(400).json({ error: 'Bio must be text.' });
+    if (b.bio.length > 1000)       return res.status(400).json({ error: 'Bio too long (max 1 000 chars).' });
+    user.bio = b.bio;
+  }
+
+  if (b.photo !== undefined) {
+    // The size check used to apply only when photo was a string, so sending it
+    // as an object skipped the cap entirely. It is also rendered into an
+    // <img src>, so anything that isn't a real data-URI image is rejected.
+    if (b.photo === null || b.photo === '') {
+      user.photo = '';
+    } else {
+      if (typeof b.photo !== 'string')
+        return res.status(400).json({ error: 'Photo must be an image data URL.' });
+      if (b.photo.length > 5 * 1024 * 1024)
+        return res.status(400).json({ error: 'Photo too large (max 5 MB).' });
+      const img = safeImage(b.photo);
+      if (!img) return res.status(400).json({ error: 'Photo must be a PNG, JPEG, GIF, or WebP image.' });
+      user.photo = img;
+    }
+  }
+
+  // These render as lists on the profile. Without a type check a client can
+  // store a string or object here and every visitor's profile render throws.
+  const LIST_FIELDS = { credentials: 40, interests: 40, recommendedBooks: 100, recommendedFilms: 100 };
+  for (const [field, maxLen] of Object.entries(LIST_FIELDS)) {
+    if (b[field] === undefined) continue;
+    if (!Array.isArray(b[field]))
+      return res.status(400).json({ error: `${field} must be a list.` });
+    if (b[field].length > 50)
+      return res.status(400).json({ error: `Too many entries in ${field} (max 50).` });
+    user[field] = b[field].slice(0, 50).map(item => {
+      // Books and films are {title, author} objects; the rest are plain strings.
+      if (item && typeof item === 'object' && !Array.isArray(item)) {
+        return {
+          title:  String(item.title  || '').slice(0, maxLen),
+          author: String(item.author || '').slice(0, maxLen)
+        };
+      }
+      return String(item == null ? '' : item).slice(0, maxLen);
+    });
+  }
+
   saveDB();
   res.json(pubSelf(user));
 });
@@ -939,6 +1097,25 @@ app.patch('/api/admin/users/:id/reject', requireAdmin, (req, res) => {
 app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
   const idx = db.users.findIndex(u => u.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'User not found.' });
+  const id = req.params.id;
+
+  // Cascade, or the account's content stays behind pointing at an id that no
+  // longer resolves: authorless posts, a conversation whose creator can never
+  // be matched again (so nobody but an admin can ever edit it), and follower
+  // lists naming a ghost.
+  const convIds = db.conversations.filter(c => c.creatorId === id).map(c => c.id);
+  db.conversations = db.conversations.filter(c => c.creatorId !== id);
+  db.posts    = db.posts.filter(p => p.authorId !== id && !convIds.includes(p.conversationId));
+  db.comments = db.comments.filter(c => c.authorId !== id && !convIds.includes(c.conversationId));
+  db.invitations = db.invitations.filter(i => i.invitedBy !== id);
+  db.conversations.forEach(c => {
+    c.participants = (c.participants || []).filter(p => p !== id);
+    c.joinRequests = (c.joinRequests || []).filter(r => r.userId !== id);
+    c.likes        = (c.likes || []).filter(x => x !== id);
+    c.dislikes     = (c.dislikes || []).filter(x => x !== id);
+  });
+  db.users.forEach(u => { u.following = (u.following || []).filter(f => f !== id); });
+
   db.users.splice(idx, 1);
   saveDB();
   res.json({ ok: true });
@@ -950,6 +1127,60 @@ app.delete('/api/admin/reset-content', requireAdmin, (req, res) => {
   db.comments = [];
   saveDB();
   res.json({ ok: true, message: 'All conversations, posts, and comments deleted.' });
+});
+
+// ─── ERROR HANDLING ───────────────────────────────────────────────────────────
+
+// 404 for unmatched API routes, so they return JSON rather than Express's HTML.
+app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
+
+// Express needs all four parameters to recognise this as an error handler.
+// Without it, a thrown error falls through to the default handler and leaks a
+// stack trace to the client.
+app.use((err, req, res, next) => {
+  if (err && (err.type === 'entity.too.large'))
+    return res.status(413).json({ error: 'That upload is too large.' });
+  if (err && (err.type === 'entity.parse.failed' || err instanceof SyntaxError))
+    return res.status(400).json({ error: 'Malformed request body.' });
+  console.error('[unhandled]', req.method, req.path, err && err.stack || err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: 'Something went wrong.' });
+});
+
+// ─── SHUTDOWN & LAST-RESORT GUARDS ────────────────────────────────────────────
+
+// Writes are debounced by up to 2s. Railway sends SIGTERM on every redeploy, and
+// Node's default action is to exit immediately — killing pending timers and
+// silently dropping any mutation whose flush had not fired yet, even though the
+// client already received a 200. Flush synchronously on the way out.
+let _shuttingDown = false;
+function flushSync(reason) {
+  if (_shuttingDown) return;
+  _shuttingDown = true;
+  try {
+    clearTimeout(_saveTimer);
+    const tmp = DATA + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
+    fs.renameSync(tmp, DATA);
+    console.log(`[shutdown] Flushed data on ${reason}.`);
+  } catch (e) {
+    console.error(`[shutdown] Failed to flush on ${reason}:`, e.message);
+  }
+}
+
+['SIGTERM', 'SIGINT'].forEach(sig => {
+  process.on(sig, () => { flushSync(sig); process.exit(0); });
+});
+
+// A single unhandled rejection would otherwise take the whole site down. Log it,
+// persist what we have, and keep serving rather than dropping every live user.
+process.on('unhandledRejection', err => {
+  console.error('[unhandledRejection]', err && err.stack || err);
+});
+process.on('uncaughtException', err => {
+  console.error('[uncaughtException]', err && err.stack || err);
+  flushSync('uncaughtException');
+  process.exit(1);
 });
 
 // ─── START ────────────────────────────────────────────────────────────────────
