@@ -359,7 +359,7 @@ function requireAuth(req, res, next) {
   if (!h || !h.startsWith('Bearer ')) return res.status(401).json({ error: 'Not authenticated.' });
   let claims;
   try {
-    claims = jwt.verify(h.slice(7), SECRET);
+    claims = jwt.verify(h.slice(7), SECRET, { algorithms: ['HS256'] });
   } catch(e) { return res.status(401).json({ error: 'Session expired. Please sign in again.' }); }
 
   const user = db.users.find(u => u.id === claims.id);
@@ -381,7 +381,7 @@ function optionalAuth(req, res, next) {
   const h = req.headers.authorization;
   if (h && h.startsWith('Bearer ')) {
     try {
-      const claims = jwt.verify(h.slice(7), SECRET);
+      const claims = jwt.verify(h.slice(7), SECRET, { algorithms: ['HS256'] });
       const user = db.users.find(u => u.id === claims.id);
       if (user) { req.user = claims; req.account = user; }
     } catch(e) {}
@@ -1089,17 +1089,121 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-app.get('/api/admin/users', requireAdmin, (req, res) => {
-  res.json(db.users.map(u => ({
+// The moderation view of a user. Carries an email address and an ID-document
+// filename, so it must only ever reach the site owner — never /api/data, and
+// never the client's cached copy of the database.
+function moderationView(u) {
+  return {
     id: u.id,
     firstName: u.firstName,
     lastName: u.lastName,
     email: u.email,
     verified: u.verified,
     idSubmitted: u.idSubmitted,
+    idRejected: !!u.idRejected,
     idFileName: u.idFileName,
+    emailVerified: !!u.emailVerified,
     createdAt: u.createdAt
-  })));
+  };
+}
+
+app.get('/api/admin/users', requireAdmin, (req, res) => {
+  res.json(db.users.map(moderationView));
+});
+
+// ─── MODERATION (signed-in owner) ─────────────────────────────────────────────
+// The same review tasks as the standalone panel, authorised by the owner's own
+// session instead of the shared secret, so they can be done from the live site.
+//
+// Deliberately NOT mounted under /api/admin: that prefix carries a 20-per-15-min
+// limiter sized for guessing attacks against the shared secret, which would
+// throttle an owner working through a queue of signups. These routes are behind
+// a real session, so the general limiter is the right one.
+//
+// Irreversible actions are NOT here. Deleting a user and wiping all content
+// still require the shared secret, so that a stolen session token — the JWT
+// lives in localStorage and the app cannot rule out XSS — cannot destroy data.
+function requireSiteAdmin(req, res, next) {
+  if (!isSiteAdmin(req)) return res.status(403).json({ error: 'Not authorised.' });
+  next();
+}
+
+app.get('/api/moderation/users', requireAuth, requireSiteAdmin, (req, res) => {
+  res.json(db.users.map(moderationView));
+});
+
+app.patch('/api/moderation/users/:id/verify', requireAuth, requireSiteAdmin, (req, res) => {
+  const user = db.users.find(u => u.id === req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  user.verified = true;
+  user.idRejected = false;
+  saveDB();
+  console.log(`[moderation] ${req.account.email} verified ${user.id}`);
+  res.json(moderationView(user));
+});
+
+app.patch('/api/moderation/users/:id/reject', requireAuth, requireSiteAdmin, (req, res) => {
+  const user = db.users.find(u => u.id === req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  user.verified = false;
+  user.idSubmitted = false;
+  user.idRejected = true;
+  saveDB();
+  console.log(`[moderation] ${req.account.email} rejected ${user.id}`);
+  res.json(moderationView(user));
+});
+
+// ─── STEP-UP FOR IRREVERSIBLE ACTIONS ─────────────────────────────────────────
+// Deleting an account cascades and cannot be undone. Gating it on the session
+// alone would mean a single stored-XSS bug — two were found in this codebase
+// this week — could delete every user, because the session token sits in
+// localStorage where injected script can read it. So it additionally requires
+// proof the operator just typed the shared secret, which is never persisted
+// anywhere the page can reach.
+//
+// The window covers a batch of deletions rather than one, so working through a
+// queue does not mean retyping the secret repeatedly and looking for a way round
+// it. Signed with a key derived from ADMIN_SECRET, so it is distinct from both
+// ADMIN_SECRET and JWT_SECRET and needs no extra configuration.
+const STEPUP_SECRET = crypto.createHmac('sha256', ADMIN_SECRET).update('saloon-stepup-v1').digest('hex');
+const STEPUP_TTL = '5m';
+
+app.post('/api/moderation/elevate', requireAuth, requireSiteAdmin, (req, res) => {
+  const key = req.body.adminKey;
+  if (typeof key !== 'string') return res.status(400).json({ error: 'Admin key is required.' });
+  const a = Buffer.from(key), b = Buffer.from(ADMIN_SECRET);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    console.warn(`[moderation] failed elevation attempt by ${req.account.email}`);
+    return res.status(401).json({ error: 'That admin key is not correct.' });
+  }
+  const token = jwt.sign({ sub: req.user.id, purpose: 'moderation-stepup' }, STEPUP_SECRET, { expiresIn: STEPUP_TTL });
+  console.log(`[moderation] ${req.account.email} elevated`);
+  res.json({ token, expiresIn: 300 });
+});
+
+function requireStepUp(req, res, next) {
+  const raw = req.headers['x-step-up'];
+  if (typeof raw !== 'string' || !raw)
+    return res.status(401).json({ error: 'This action needs the admin key.', stepUpRequired: true });
+  try {
+    const claims = jwt.verify(raw, STEPUP_SECRET, { algorithms: ['HS256'] });
+    // Bound to the operator who elevated, so a token cannot be reused by another
+    // session even if it leaks.
+    if (claims.purpose !== 'moderation-stepup' || claims.sub !== req.user.id)
+      return res.status(401).json({ error: 'This action needs the admin key.', stepUpRequired: true });
+  } catch (e) {
+    return res.status(401).json({ error: 'Your admin key confirmation expired.', stepUpRequired: true });
+  }
+  next();
+}
+
+app.delete('/api/moderation/users/:id', requireAuth, requireSiteAdmin, requireStepUp, (req, res) => {
+  if (req.params.id === req.user.id)
+    return res.status(400).json({ error: 'You cannot delete your own account here.' });
+  const result = deleteUserCascade(req.params.id);
+  if (!result) return res.status(404).json({ error: 'User not found.' });
+  console.log(`[moderation] ${req.account.email} DELETED user ${req.params.id}`);
+  res.json({ ok: true });
 });
 
 app.patch('/api/admin/users/:id/verify', requireAdmin, (req, res) => {
@@ -1120,15 +1224,17 @@ app.patch('/api/admin/users/:id/reject', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
-app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
-  const idx = db.users.findIndex(u => u.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'User not found.' });
-  const id = req.params.id;
+// Shared by both delete paths so they can never drift apart. Returns false if
+// there is no such user.
+//
+// Cascade, or the account's content stays behind pointing at an id that no
+// longer resolves: authorless posts, a conversation whose creator can never be
+// matched again (so nobody but an admin can ever edit it), and follower lists
+// naming a ghost.
+function deleteUserCascade(id) {
+  const idx = db.users.findIndex(u => u.id === id);
+  if (idx === -1) return false;
 
-  // Cascade, or the account's content stays behind pointing at an id that no
-  // longer resolves: authorless posts, a conversation whose creator can never
-  // be matched again (so nobody but an admin can ever edit it), and follower
-  // lists naming a ghost.
   const convIds = db.conversations.filter(c => c.creatorId === id).map(c => c.id);
   db.conversations = db.conversations.filter(c => c.creatorId !== id);
   db.posts    = db.posts.filter(p => p.authorId !== id && !convIds.includes(p.conversationId));
@@ -1144,6 +1250,12 @@ app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
 
   db.users.splice(idx, 1);
   saveDB();
+  return true;
+}
+
+app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
+  if (!deleteUserCascade(req.params.id))
+    return res.status(404).json({ error: 'User not found.' });
   res.json({ ok: true });
 });
 
