@@ -1,0 +1,40 @@
+# GitHub Pages configuration for saloon.org
+#
+# Pages publishes this repository's root, which meant the backend source was
+# downloadable from the live site (saloon.org/server.js returned 200). These
+# files must STAY at the repo root because Railway deploys the backend from
+# there — they are simply not copied into the published site.
+#
+# admin.html is excluded too: the moderation panel is now served by the backend
+# itself at <railway-url>/admin, which keeps it off the public domain and makes
+# it same-origin with the API it calls.
+#
+# NOTE: GitHub Pages pins Jekyll 3.x, where `exclude` REPLACES the default list
+# instead of extending it. The stock defaults are therefore restored below —
+# dropping them would start publishing node_modules/ and vendor/ if either ever
+# appears in the repo. (Jekyll always skips names beginning with "." or "_"
+# regardless of this list, which is separate from `exclude`.)
+
+exclude:
+  # Backend — deployed to Railway, never published to Pages.
+  - server.js
+  - package.json
+  - package-lock.json
+  - railway.json
+  - admin.html
+
+  # Local database artifacts, should one ever be written into the repo dir.
+  - data.json
+  - data.json.tmp
+
+  # Jekyll's stock defaults, restored explicitly (see note above).
+  - Gemfile
+  - Gemfile.lock
+  - gemfiles/
+  - node_modules/
+  - vendor/bundle/
+  - vendor/cache/
+  - vendor/gems/
+  - vendor/ruby/
+  - .sass-cache/
+  - .jekyll-cache/

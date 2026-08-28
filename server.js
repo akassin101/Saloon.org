@@ -323,6 +323,32 @@ app.use((req, res, next) => {
 // and an earlier version served path.join(__dirname, '..') — which resolves to
 // the filesystem root in the container, exposing data.json and everything else.
 
+// The moderation panel is served from the backend rather than published to
+// GitHub Pages, so it is same-origin with the API it calls (no CORS) and no
+// longer sits on the public saloon.org domain. This is ONE named file with a
+// hardcoded path — it takes nothing from the request, so unlike the
+// express.static(root) mistake above there is no path-traversal surface.
+// The page is inert without ADMIN_SECRET; requireAdmin remains the real boundary.
+app.get('/admin', (req, res) => {
+  // helmet's global default sets script-src 'self' and script-src-attr 'none',
+  // which would block this page's inline <script> and its inline onclick
+  // handlers. Relax it for this one response only.
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "script-src-attr 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "connect-src 'self'",
+    "img-src 'self' data:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'"
+  ].join('; '));
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  res.sendFile(path.join(__dirname, 'admin.html'));
+});
+
 // Auth middleware — hard-fails with 401.
 // A valid signature is NOT sufficient. The token is a 30-day bearer credential
 // with no revocation list, so every request must also confirm the account still
