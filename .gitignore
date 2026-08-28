@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Local database and its write artifacts. This repo is public and serves
+# GitHub Pages — committing these would publish every user record and
+# bcrypt password hash.
+data.json
+data.json.tmp
+data.json.corrupt-*
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+
+# OS noise
+.DS_Store
