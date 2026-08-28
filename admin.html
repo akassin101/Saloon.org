@@ -79,7 +79,12 @@
 </div>
 
 <script>
-const API = 'https://saloonorg-production.up.railway.app';
+const BACKEND = 'https://saloonorg-production.up.railway.app';
+// This page is normally served BY the backend at <backend>/admin, where a
+// relative path keeps every request same-origin and CORS never applies. If the
+// file is opened from anywhere else (a local copy, say), fall back to the
+// absolute URL — that path still depends on the server's CORS allowlist.
+const API = (location.origin === BACKEND) ? '' : BACKEND;
 let adminKey = '';
 let users = [];
 let currentTab = 'pending';
