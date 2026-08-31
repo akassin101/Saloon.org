@@ -17,7 +17,7 @@
   script-src 'self' 'unsafe-inline' https://accounts.google.com;
   style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com;
   font-src 'self' data: https://fonts.gstatic.com;
-  img-src 'self' data: https://accounts.google.com https://lh3.googleusercontent.com;
+  img-src 'self' data: https://accounts.google.com https://lh3.googleusercontent.com https://saloonorg-production.up.railway.app;
   connect-src 'self' https://saloonorg-production.up.railway.app https://accounts.google.com;
   frame-src https://accounts.google.com;
   form-action 'self';
@@ -1091,8 +1091,11 @@ function bw(method, path, body) {
 }
 
 // Pull latest data from backend and hydrate the local DB, then re-render.
+// Resolves true when live data was loaded, false when the backend could not be
+// reached. It deliberately does not reject: callers branch on the result, and a
+// thrown error here would take down startup.
 async function backendInit() {
-  if (!BACKEND_URL) return;
+  if (!BACKEND_URL) return false;
   try {
     const data = await apiCall('GET', '/api/data');
     if (data) {
@@ -1118,8 +1121,10 @@ async function backendInit() {
         currentUser = null;
       }
     }
+    return true;
   } catch(e) {
     console.warn('[Saloon] Backend unreachable — running in local mode.', e.message);
+    return false;
   }
 }
 
@@ -1142,7 +1147,9 @@ const DB = {
       // ID data is intentionally excluded — stored separately in IDSTORE
       const payload = {
         users: DB.users.map(u => {
-          const { idFile, ...safe } = u; // never persist raw ID image in main DB
+          // Never persist the raw ID image, nor a legacy inline photo: an old
+          // cache could otherwise re-save megabytes of base64 on every write.
+          const { idFile, photo, ...safe } = u;
           return safe;
         }),
         conversations: DB.conversations,
@@ -1418,6 +1425,46 @@ function copyConvLink() {
     document.body.appendChild(pop);
     setTimeout(() => document.addEventListener('click', function h(e){ if(!pop.contains(e.target)){pop.remove();document.removeEventListener('click',h);} }), 50);
   }
+}
+
+// A quiet placeholder for the window before the first fetch resolves. Not a
+// spinner in an empty page: it keeps the chrome and reserves the space the real
+// content will occupy.
+function renderLoadingPage(elId, label) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.innerHTML = `
+    <div class="container" aria-busy="true">
+      <div style="font-family:var(--font-ui);font-size:13px;color:var(--muted);padding:8px 0 18px">${esc(label)}&hellip;</div>
+      ${[0,1,2].map(() => `
+        <div style="border:1px solid var(--border);border-radius:6px;background:var(--surface);padding:18px;margin-bottom:12px">
+          <div style="height:14px;width:62%;background:var(--border);border-radius:3px;opacity:.55"></div>
+          <div style="height:10px;width:38%;background:var(--border);border-radius:3px;opacity:.4;margin-top:12px"></div>
+          <div style="height:10px;width:88%;background:var(--border);border-radius:3px;opacity:.3;margin-top:14px"></div>
+        </div>`).join('')}
+    </div>`;
+}
+
+// Re-render once real data arrives. Deliberately not a blind navigate(): that
+// would push a bogus history entry and destroy anything the user has typed.
+// Pages backed by an uncontrolled input are skipped entirely.
+function hydrateAfterLoad() {
+  const page = currentPage, id = currentConvId;
+  if (page === 'home') { renderHome(); }
+  else if (page === 'profile') { renderProfile(id); }
+  else if (page === 'admin') { renderAdmin(); }
+  else if (page === 'conversation') {
+    // Skip the re-render while an editor is open, or unsaved text would vanish.
+    // The underlying data is already fresh; the DOM catches up on the next
+    // interaction. Tracking still runs: the person read the page either way.
+    if (!editingPostId && !editingSourcesPostId && !editingTitle && !editingCategory) {
+      renderConversation(id);
+    }
+    if (backendReady) trackView(id);
+  }
+  // login / register / reset / draft hold in-progress input and are never
+  // re-rendered from under the user.
+  renderNav();
 }
 
 function renderPage(page, id) {
@@ -1944,7 +1991,13 @@ function trackView(id) {
 
 function renderConversation(id) {
   const conv = DB.conversations.find(c => c.id === id);
-  if (!conv) { navigate('home'); return; }
+  if (!conv) {
+    // Before the first load completes we cannot know whether this conversation
+    // is missing or merely not fetched yet. Bouncing home here would break every
+    // shared link opened cold.
+    if (!backendReady) { renderLoadingPage('page-conversation', 'Loading conversation'); return; }
+    navigate('home'); return;
+  }
   // A draft belongs on the sandbox page and only to its creator.
   if (conv.draft) {
     if (currentUser && conv.creatorId === currentUser.id) { navigate('draft', id); return; }
@@ -3281,8 +3334,8 @@ function renderProfile(userId) {
       </div>
 
       <div class="profile-header">
-        <div class="profile-avatar clickable" onclick="${isOwn ? 'document.getElementById(\'profile-photo-input\').click()' : (user.photo ? `openLightbox('${user.id}')` : '')}">
-          ${safeImage(user.photo) ? `<img src="${esc(safeImage(user.photo))}" alt="Profile photo">` : esc(initials(user))}
+        <div class="profile-avatar clickable" onclick="${isOwn ? 'document.getElementById(\'profile-photo-input\').click()' : (photoUrl(user) ? `openLightbox('${user.id}')` : '')}">
+          ${photoUrl(user) ? `<img src="${esc(photoUrl(user))}" alt="Profile photo" data-initials="${esc(initials(user))}" onerror="avatarFallback(this)">` : esc(initials(user))}
         </div>
         <div class="profile-info">
           <div class="profile-name">${esc(displayName(user))}</div>
@@ -3316,7 +3369,7 @@ function renderProfile(userId) {
 function renderFollowRow(user) {
   return `
     <div class="follow-row">
-      <div class="follow-avatar">${safeImage(user.photo) ? `<img src="${esc(safeImage(user.photo))}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">` : esc(initials(user))}</div>
+      <div class="follow-avatar">${photoUrl(user) ? `<img src="${esc(photoUrl(user))}" style="width:100%;height:100%;object-fit:cover;border-radius:50%" data-initials="${esc(initials(user))}" onerror="avatarFallback(this)">` : esc(initials(user))}</div>
       <div class="follow-info">
         <div class="follow-name" onclick="navigate('profile','${user.id}')">${esc(displayName(user))}</div>
         ${user.bio ? `<div class="follow-bio">${esc(user.bio.slice(0, 80))}${user.bio.length > 80 ? '…' : ''}</div>` : ''}
@@ -3337,32 +3390,141 @@ function setProfileTab(tab, userId) {
   renderProfile(userId);
 }
 
-function handleProfilePhotoUpload(e) {
+// A profile photo is shown at 96px, and at most in a lightbox. Uploading a raw
+// camera file meant a 3 MB image was downloaded by every visitor to render a
+// thumbnail. Downscale before it ever leaves the browser.
+const PHOTO_MAX_DIM = 480;
+const PHOTO_QUALITY = 0.82;
+
+async function downscaleImage(file) {
+  let source, usedBitmap = false;
+  try {
+    // The DEFAULT ignores EXIF orientation, which silently produces sideways
+    // avatars for ordinary phone photos. Asking for 'from-image' is required.
+    // The resize hints also let the decoder downsample as it decodes, so a huge
+    // image never has to be materialised at full resolution on a phone.
+    // No resize hints here: they are applied unconditionally by the decoder and
+    // would UPSCALE an image smaller than the target, making it both blurrier
+    // and larger than the original. Scaling happens on the canvas below, where
+    // the real dimensions are known.
+    source = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    usedBitmap = true;
+  } catch (e) {
+    // Fallback decode. <img> applies EXIF orientation itself in current
+    // browsers, so no rotation is applied here either — doing so would
+    // double-rotate.
+    source = await new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload  = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('could not decode image')); };
+      img.src = url;
+    });
+  }
+
+  const sw = source.width, sh = source.height;
+  if (!sw || !sh) throw new Error('image has no dimensions');
+
+  const scale = Math.min(1, PHOTO_MAX_DIM / Math.max(sw, sh)); // never upscale
+  const w = Math.max(1, Math.round(sw * scale));
+  const h = Math.max(1, Math.round(sh * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  // A format that can carry transparency would otherwise flatten to black when
+  // encoded as JPEG.
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, w, h);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(source, 0, 0, w, h);
+  if (usedBitmap && source.close) source.close();
+
+  const blob = await new Promise((resolve, reject) => {
+    canvas.toBlob(b => b ? resolve(b) : reject(new Error('could not encode image')), 'image/jpeg', PHOTO_QUALITY);
+  });
+
+  const dataUri = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload  = () => resolve(r.result);
+    r.onerror = () => reject(r.error || new Error('could not read image'));
+    r.readAsDataURL(blob);
+  });
+
+  return { dataUri, width: w, height: h, bytes: blob.size };
+}
+
+let photoUploadInFlight = false;
+
+async function handleProfilePhotoUpload(e) {
   const file = e.target.files[0];
+  e.target.value = '';                       // allow re-picking the same file
   if (!file) return;
-  if (file.size > 5 * 1024 * 1024) { toast('Photo must be under 5 MB.'); return; }
-  const reader = new FileReader();
-  reader.onload = async ev => {
-    const photo = ev.target.result;
-    try {
-      const updated = await apiCall('PATCH', `/api/users/${currentUser.id}`, { photo });
-      currentUser.photo = updated.photo;
-      const idx = DB.users.findIndex(u => u.id === currentUser.id);
-      if (idx >= 0) DB.users[idx] = { ...DB.users[idx], photo: updated.photo };
-      DB.save();
-      renderProfile(currentUser.id);
-      toast('Profile photo updated.');
-    } catch { toast('Failed to save photo.'); }
-  };
-  reader.readAsDataURL(file);
-  e.target.value = '';
+  // Two quick picks would otherwise race, and whichever response landed last
+  // would win the local version number regardless of which one the server kept.
+  if (photoUploadInFlight) { toast('Still saving the last photo...'); return; }
+  photoUploadInFlight = true;
+  try {
+    await uploadProfilePhoto(file);
+  } finally {
+    photoUploadInFlight = false;
+  }
+}
+
+async function uploadProfilePhoto(file) {
+  if (!/^image\//.test(file.type || '')) { toast('Please choose an image file.'); return; }
+  if (file.size > 15 * 1024 * 1024) { toast('That image is too large to process.'); return; }
+
+  toast('Processing photo...');
+  let out;
+  try {
+    out = await downscaleImage(file);
+  } catch (err) {
+    // Deliberately do NOT fall back to the original file: that would reintroduce
+    // multi-megabyte uploads for exactly the broken inputs least worth storing.
+    console.warn('[photo] downscale failed', err);
+    toast('Could not process that image. Try a JPEG or PNG.');
+    return;
+  }
+
+  try {
+    const updated = await apiCall('PATCH', `/api/users/${currentUser.id}`, { photo: out.dataUri });
+    // Only the version is kept client-side; the bytes stay on the server. The
+    // changed version also changes the URL, which is what makes the browser
+    // refetch instead of showing the cached previous photo.
+    currentUser.photoVersion = updated.photoVersion;
+    const idx = DB.users.findIndex(u => u.id === currentUser.id);
+    if (idx >= 0) DB.users[idx] = { ...DB.users[idx], photoVersion: updated.photoVersion };
+    DB.save();
+    renderProfile(currentUser.id);
+    toast('Profile photo updated.');
+  } catch (err) {
+    toast(err.message || 'Failed to save photo.');
+  }
 }
 
 function openLightbox(userId) {
   const user = DB.users.find(u => u.id === userId);
-  if (!user || !user.photo) return;
-  document.getElementById('photo-lightbox-img').src = safeImage(user.photo);
+  const url = photoUrl(user);
+  if (!url) return;
+  const img = document.getElementById('photo-lightbox-img');
+  img.onerror = closeLightbox;
+  img.src = url;
   document.getElementById('photo-lightbox').classList.add('open');
+}
+
+// A photo can 404 at runtime (version points at a file that is gone). Swap the
+// broken image for the initials the no-photo path would have rendered.
+//
+// The initials travel in a data attribute rather than as a JS string literal in
+// the handler: the browser HTML-decodes an attribute BEFORE evaluating it as
+// JavaScript, so an escaped quote becomes a real quote again and escapes the
+// string. Reading the value with getAttribute keeps it data at every step.
+function avatarFallback(img) {
+  const span = document.createElement('span');
+  span.textContent = img.getAttribute('data-initials') || '';
+  if (img.parentNode) img.parentNode.replaceChild(span, img);
 }
 
 function closeLightbox() {
@@ -3591,6 +3753,18 @@ function safeImage(value) {
   return DATA_IMAGE_RE.test(s) ? s : '';
 }
 
+// Photos are served from the backend rather than inlined in the payload. The id
+// is interpolated into an <img src>, so it is validated the same way a data URI
+// was: this is the same injection surface, just a different value shape.
+const USER_ID_RE = /^[a-z0-9]{1,40}$/;
+function photoUrl(user) {
+  if (!user || !user.photoVersion) return '';
+  if (!USER_ID_RE.test(String(user.id || ''))) return '';
+  const v = Number(user.photoVersion);
+  if (!Number.isFinite(v)) return '';
+  return BACKEND_URL + '/api/users/' + encodeURIComponent(user.id) + '/photo?v=' + v;
+}
+
 // esc() escapes characters, not schemes — a "javascript:" href survives it intact.
 // Any user-supplied URL must pass through here before becoming an href.
 function safeUrl(url) {
@@ -3726,7 +3900,10 @@ function seedData() {
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 
 DB.load();
-seedData();
+// Demo content is for local mode only. With a backend configured, seeding would
+// show a first-time visitor fabricated conversations for the moment before real
+// data lands — worse than showing nothing.
+if (!BACKEND_URL) seedData();
 async function resendVerificationTo(email) {
   await apiCall('POST', '/api/auth/resend-verification', { email }).catch(() => {});
   toast('Verification email resent — check your inbox.');
@@ -3776,22 +3953,23 @@ async function resendVerificationTo(email) {
   const _init = parseHash();
 
   if (BACKEND_URL) {
-    // Show a brief loading state so stale localStorage data never flashes
-    if (_init.page === 'home') {
-      document.getElementById('page-home').innerHTML =
-        '<div style="padding:60px 0;text-align:center;color:var(--muted);font-family:var(--font-ui);font-size:14px">Loading…</div>';
-      PAGES.forEach(p => {
-        const el = document.getElementById('page-' + p);
-        if (el) el.style.display = p === 'home' ? '' : 'none';
-      });
-    } else {
-      navigate(_init.page, _init.id);
-    }
-    backendInit().then(() => {
+    // Paint immediately. A returning visitor sees their cached content right
+    // away; a first-time visitor sees a placeholder rather than a blank screen.
+    // Neither waits on the network.
+    navigate(_init.page, _init.id);
+    if (!DB.conversations.length && _init.page === 'home') renderLoadingPage('page-home', 'Loading conversations');
+
+    backendInit().then(live => {
+      // The flag means "startup finished", not "the backend answered".
       backendReady = true;
       loadSession();
-      renderNav();
-      navigate(_init.page, _init.id);
+      if (!live) {
+        // Only seed on an actual failure. A backend that legitimately returns an
+        // empty site must show an empty site, never fabricated conversations.
+        if (!DB.conversations.length) seedData();
+        toast('Could not reach the server — showing offline content.');
+      }
+      hydrateAfterLoad();
     });
   } else {
     navigate(_init.page, _init.id);
