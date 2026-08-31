@@ -1171,6 +1171,12 @@ app.get('/api/users/:id/photo', (req, res) => {
     res.setHeader('ETag', etag);
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     res.setHeader('Content-Type', IMAGE_MIME[user.photoExt] || 'application/octet-stream');
+    // helmet sets Cross-Origin-Resource-Policy: same-origin for the whole API,
+    // which blocks a cross-origin <img> — and the frontend is served from a
+    // different origin than this backend. Relax it for this one response only;
+    // the rest of the API keeps the stricter default. These bytes are already
+    // public to anyone who can read the profile.
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.setHeader('Content-Length', stat.size);
     if (req.headers['if-none-match'] === etag) return res.status(304).end();
 
