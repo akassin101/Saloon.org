@@ -555,10 +555,11 @@ const limiterBase = {
   windowMs: 15 * 60 * 1000,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: clientIp,
-  // keyGenerator returns an already-normalised string, so skip the built-in
-  // IPv6 fallback validation rather than letting it warn on every request.
-  validate: { keyGeneratorIpFallback: false }
+  keyGenerator: clientIp
+  // No `validate` override here on purpose. Disabling a specific check by name
+  // ties this to a version range that nothing pins, and an unknown name is
+  // itself logged as an error on boot. If a future version warns about the
+  // custom key generator, that is a warning worth seeing rather than silencing.
 };
 
 const authLimiter = rateLimit({
@@ -1928,6 +1929,7 @@ app.listen(PORT, () => {
   console.log('    const BACKEND_URL = \'http://localhost:' + PORT + '\';');
   console.log('');
   console.log('  JWT_SECRET set:', SECRET !== 'saloon-dev-secret-change-in-production');
+  console.log('  ID verification:', ID_KEY_READY ? 'enabled' : 'DISABLED (set ID_ENCRYPTION_KEY to enable)');
   console.log('  RESEND_API_KEY set:', !!RESEND_KEY);
   console.log('  FROM_EMAIL:', FROM_EMAIL);
   console.log('');
