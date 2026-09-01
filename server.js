@@ -75,10 +75,13 @@ if (IS_PROD) {
     console.error('\n  FATAL: JWT_SECRET and ADMIN_SECRET must be different values.\n');
     process.exit(1);
   }
-  // Without this the CORS origin silently falls back to '*' if the env var is
-  // ever dropped from a redeploy or a new environment.
-  if (!process.env.FRONTEND_ORIGIN)
-    console.warn('  WARNING: FRONTEND_ORIGIN is unset — CORS is falling back to "*".');
+  // An open CORS policy is an authorisation boundary failure, not a cosmetic
+  // default. Verified before shipping that FRONTEND_ORIGIN is set in production.
+  if (!process.env.FRONTEND_ORIGIN) {
+    console.error('\n  FATAL: FRONTEND_ORIGIN is unset in production — refusing to fall back to CORS "*".');
+    console.error('  Set it to your frontend URL (comma-separated for several).\n');
+    process.exit(1);
+  }
 }
 
 // ─── EMAIL ─────────────────────────────────────────────────────────────────────
@@ -96,6 +99,7 @@ async function sendMail(to, subject, html) {
       hostname: 'api.resend.com',
       path: '/emails',
       method: 'POST',
+      timeout: 10000,
       headers: {
         'Authorization': `Bearer ${RESEND_KEY}`,
         'Content-Type': 'application/json',
@@ -113,6 +117,7 @@ async function sendMail(to, subject, html) {
       });
     });
     req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('Resend API request timed out.')));
     req.write(body);
     req.end();
   });
@@ -293,6 +298,101 @@ function removePhotoFile(user) {
   });
 }
 
+// ─── ID DOCUMENT STORE ────────────────────────────────────────────────────────
+// Government identity documents. Held to a stricter standard than anything else
+// in this system: encrypted at rest, never public, never cached, deleted the
+// moment a decision is made, and swept if nobody ever reviews them.
+//
+// Separate directory from photos, mode 0700, so the access boundary is a
+// filesystem boundary and not only an application-logic one.
+
+const ID_DOCS_DIR = path.join(path.dirname(DATA), 'id-docs');
+
+// An ID must stay legible — small print, dates, holograms — so this ceiling is
+// far above the 400 KB avatar cap while still bounding a single upload.
+const MAX_ID_BYTES = 3 * 1024 * 1024;
+
+// A document should sit in the queue for as short a time as possible. Long
+// enough to survive a backlog or a holiday; short enough that an ID is never
+// resident for a season.
+const ID_DOC_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const ID_DOC_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+const ID_ENC_VERSION = 1;
+const ID_IV_LEN  = 12;   // GCM standard nonce
+const ID_TAG_LEN = 16;
+
+// Deliberately NOT part of the fatal boot guard used for JWT_SECRET and
+// ADMIN_SECRET. Those protect session forgery and admin takeover — outage-grade
+// risks. A missing ID key disables one feature; turning that into a site-wide
+// outage would be the wrong trade.
+let ID_ENC_KEY = null;
+let ID_KEY_READY = false;
+{
+  const raw = process.env.ID_ENCRYPTION_KEY;
+  if (!raw) {
+    console.warn('[id-docs] ID_ENCRYPTION_KEY is not set — ID verification is DISABLED (everything else runs normally).');
+  } else if (!/^[0-9a-fA-F]{64}$/.test(raw)) {
+    console.error('[id-docs] ID_ENCRYPTION_KEY must be 64 hex characters — ID verification is DISABLED.');
+  } else {
+    ID_ENC_KEY = Buffer.from(raw, 'hex');
+    ID_KEY_READY = true;
+  }
+}
+
+function ensureIdDocsDir() {
+  try {
+    fs.mkdirSync(ID_DOCS_DIR, { recursive: true, mode: 0o700 });
+  } catch (e) {
+    console.error(`\n  FATAL: cannot create ID document directory at ${ID_DOCS_DIR}: ${e.message}\n`);
+    process.exit(1);
+  }
+}
+ensureIdDocsDir();
+
+function idDocPathFor(userId) {
+  if (!SAFE_ID_RE.test(String(userId || ''))) return null;
+  const p = path.resolve(ID_DOCS_DIR, `${userId}.id.enc`);
+  if (path.dirname(p) !== path.resolve(ID_DOCS_DIR)) return null;
+  return p;
+}
+
+// Layout: [version:1][iv:12][tag:16][ciphertext]
+// The image type is authenticated as associated data, so the stored type on the
+// user record cannot be swapped independently of the bytes without decryption
+// failing outright.
+function encryptIdBuffer(buffer, mimeExt) {
+  if (!ID_KEY_READY) throw new Error('ID_ENCRYPTION_KEY not configured');
+  const iv = crypto.randomBytes(ID_IV_LEN);
+  const cipher = crypto.createCipheriv('aes-256-gcm', ID_ENC_KEY, iv);
+  cipher.setAAD(Buffer.from(mimeExt, 'utf8'));
+  const ciphertext = Buffer.concat([cipher.update(buffer), cipher.final()]);
+  return Buffer.concat([Buffer.from([ID_ENC_VERSION]), iv, cipher.getAuthTag(), ciphertext]);
+}
+
+function decryptIdBuffer(fileBuf, mimeExt) {
+  if (!ID_KEY_READY) throw new Error('ID_ENCRYPTION_KEY not configured');
+  if (fileBuf.length < 1 + ID_IV_LEN + ID_TAG_LEN) throw new Error('corrupt: too short');
+  if (fileBuf[0] !== ID_ENC_VERSION) throw new Error(`unsupported format version ${fileBuf[0]}`);
+  const iv  = fileBuf.subarray(1, 1 + ID_IV_LEN);
+  const tag = fileBuf.subarray(1 + ID_IV_LEN, 1 + ID_IV_LEN + ID_TAG_LEN);
+  const ct  = fileBuf.subarray(1 + ID_IV_LEN + ID_TAG_LEN);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', ID_ENC_KEY, iv);
+  decipher.setAAD(Buffer.from(mimeExt, 'utf8'));
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ct), decipher.final()]);   // throws on tamper
+}
+
+function deleteIdDocFile(user) {
+  if (!user) return;
+  const p = idDocPathFor(user.id);
+  if (!p) return;
+  fs.unlink(p, err => {
+    if (err && err.code !== 'ENOENT')
+      console.error(`[id-docs] failed to delete document for ${user.id}: ${err.message}`);
+  });
+}
+
 // ─── MIGRATIONS ───────────────────────────────────────────────────────────────
 // Each runs at most once; db.meta records which have already been applied.
 
@@ -359,18 +459,43 @@ if (!db.meta.photosMigratedAt) {
   }
 }
 
+// The filename was the only thing the old flow ever stored about an ID, and it
+// proved nothing. Nothing reads it any more; remove it rather than leave it
+// sitting in the database.
+if (!db.meta.idFileNamePurgedAt) {
+  let purged = 0;
+  db.users.forEach(u => { if (u.idFileName !== undefined) { delete u.idFileName; purged++; } });
+  db.meta.idFileNamePurgedAt = Date.now();
+  if (purged) console.log(`[migration] Removed the legacy idFileName field from ${purged} user(s).`);
+}
+
 saveDB();
 
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
-// idFileName is user-supplied and is rendered in the admin panel. Reduce it to a
-// plain filename so it can never carry markup, path separators, or unbounded length.
 // Per-address throttle for anything that sends mail. The IP-based limiter keys
 // on a spoofable header, so on its own it does not stop someone from bombing one
 // person's inbox (and burning Resend quota and sender reputation) by rotating
 // X-Forwarded-For. Keyed on the target address, which cannot be rotated.
+// One submission per account per few minutes. A review cycle needs one upload;
+// anything faster is either a mistake or someone using the encrypt-and-write
+// path as a cost lever.
+const _idUploads = new Map();
+const ID_UPLOAD_COOLDOWN_MS = 3 * 60 * 1000;
+
+function idUploadAllowed(userId) {
+  const now = Date.now();
+  if (_idUploads.size > 5000) {
+    for (const [k, t] of _idUploads) if (now - t > ID_UPLOAD_COOLDOWN_MS) _idUploads.delete(k);
+  }
+  const last = _idUploads.get(userId);
+  if (last && now - last < ID_UPLOAD_COOLDOWN_MS) return false;
+  _idUploads.set(userId, now);
+  return true;
+}
+
 const _mailSends = new Map();
 const MAIL_WINDOW_MS = 15 * 60 * 1000;
 const MAIL_MAX_PER_WINDOW = 3;
@@ -388,11 +513,6 @@ function mailAllowed(email) {
   if (rec.count >= MAIL_MAX_PER_WINDOW) return false;
   rec.count++;
   return true;
-}
-
-function safeFileName(name) {
-  if (typeof name !== 'string') return '';
-  return name.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120);
 }
 
 // Source URLs are optional and become href attributes. Only http(s) may through —
@@ -448,6 +568,7 @@ const authLimiter = rateLimit({
 });
 app.use('/api/auth', authLimiter);
 app.use('/api/admin', authLimiter);
+app.use('/api/users/me', authLimiter);   // password check — same brute-force surface as login
 
 app.use(rateLimit({ ...limiterBase, max: 1000 }));
 
@@ -570,7 +691,9 @@ function pubSelf(u) {
   return Object.assign(pub(u), {
     email: u.email,
     emailVerified: u.emailVerified,
-    idFileName: u.idFileName,
+    hasPassword: !!u.passwordHash,   // which confirmation deletion should ask for
+    idSubmitted: !!u.idSubmitted,
+    idRejected: !!u.idRejected,
     isAdmin: u.email === ADMIN_EMAIL
   });
 }
@@ -585,6 +708,7 @@ async function verifyGoogleToken(credential) {
       hostname: 'oauth2.googleapis.com',
       path: `/tokeninfo?id_token=${encodeURIComponent(credential)}`,
       method: 'GET',
+      timeout: 5000,
     }, res => {
       let data = '';
       res.on('data', c => data += c);
@@ -607,6 +731,8 @@ async function verifyGoogleToken(credential) {
       });
     });
     req.on('error', reject);
+    // 'timeout' fires but does not abort; destroy() is what surfaces it.
+    req.on('timeout', () => req.destroy(new Error('Google sign-in timed out. Please try again.')));
     req.end();
   });
 }
@@ -635,7 +761,7 @@ app.post('/api/auth/google', async (req, res) => {
 });
 
 app.post('/api/auth/register', async (req, res) => {
-  const { firstName, lastName, email, password, googleCredential, idFileName } = req.body;
+  const { firstName, lastName, email, password, googleCredential } = req.body;
   if (!firstName || !lastName || !email)
     return res.status(400).json({ error: 'All fields are required.' });
   if (typeof firstName !== 'string' || typeof lastName !== 'string' || typeof email !== 'string')
@@ -676,8 +802,8 @@ app.post('/api/auth/register', async (req, res) => {
     emailVerified: !!googleId,
     emailVerifyToken,
     emailVerifyTokenExpiry: emailVerifyToken ? Date.now() + EMAIL_VERIFY_TTL_MS : null,
-    idFileName: safeFileName(idFileName),
-    idSubmitted: !!idFileName,
+    idSubmitted: false,
+    idRejected: false,
     verified: false,
     createdAt: Date.now(),
     bio: '', credentials: [], interests: [],
@@ -928,12 +1054,11 @@ app.put('/api/conversations/:id', requireAuth, (req, res) => {
         requestedAt: Number(r.requestedAt) || Date.now()
       }));
   }
-  if (req.body.participants !== undefined && Array.isArray(req.body.participants)) {
-    // Only real user IDs, no duplicates, and the creator can never be removed.
-    const next = req.body.participants.filter(id => db.users.some(u => u.id === id));
-    if (!next.includes(conv.creatorId)) next.push(conv.creatorId);
-    conv.participants = [...new Set(next)];
-  }
+  // participants is deliberately NOT settable here any more. Replacing the whole
+  // array from client state was a lost-update race: a stale tab would silently
+  // drop anyone added meanwhile. Use the targeted join-request and participant
+  // endpoints instead. A stale client still sending the field is ignored rather
+  // than rejected, so older tabs degrade quietly instead of erroring.
   saveDB();
   res.json(conv);
 });
@@ -943,6 +1068,8 @@ app.delete('/api/conversations/:id', requireAuth, (req, res) => {
   if (idx === -1) return res.status(404).json({ error: 'Conversation not found.' });
   if (db.conversations[idx].creatorId !== req.user.id && !isSiteAdmin(req))
     return res.status(403).json({ error: 'Only the creator can delete this.' });
+  if (db.conversations[idx].creatorId !== req.user.id)
+    console.log(`[moderation] ${req.account.email} deleted conversation ${req.params.id} by ${db.conversations[idx].creatorId}`);
   db.conversations.splice(idx, 1);
   db.posts    = db.posts.filter(p => p.conversationId !== req.params.id);
   db.comments = db.comments.filter(c => c.conversationId !== req.params.id);
@@ -1008,14 +1135,51 @@ app.post('/api/conversations/:id/vote', requireAuth, (req, res) => {
   res.json(conv);
 });
 
+// Accept / decline operate on one request at a time, server-side. Replacing the
+// whole participants array from client state raced with every other way a
+// participant can be added.
+app.post('/api/conversations/:id/join-requests/:userId/accept', requireAuth, (req, res) => {
+  const conv = db.conversations.find(c => c.id === req.params.id);
+  if (!conv) return res.status(404).json({ error: 'Conversation not found.' });
+  if (conv.creatorId !== req.user.id && !isSiteAdmin(req))
+    return res.status(403).json({ error: 'Only the creator can accept join requests.' });
+  const targetId = req.params.userId;
+  if (!(conv.joinRequests || []).some(r => r.userId === targetId))
+    return res.status(404).json({ error: 'No such join request.' });
+  if (!db.users.some(u => u.id === targetId))
+    return res.status(404).json({ error: 'That account no longer exists.' });
+  conv.joinRequests = (conv.joinRequests || []).filter(r => r.userId !== targetId);
+  if (!conv.participants.includes(targetId)) conv.participants.push(targetId);
+  saveDB();
+  res.json(conv);
+});
+
+app.post('/api/conversations/:id/join-requests/:userId/decline', requireAuth, (req, res) => {
+  const conv = db.conversations.find(c => c.id === req.params.id);
+  if (!conv) return res.status(404).json({ error: 'Conversation not found.' });
+  if (conv.creatorId !== req.user.id && !isSiteAdmin(req))
+    return res.status(403).json({ error: 'Only the creator can decline join requests.' });
+  const before = (conv.joinRequests || []).length;
+  conv.joinRequests = (conv.joinRequests || []).filter(r => r.userId !== req.params.userId);
+  if (conv.joinRequests.length === before)
+    return res.status(404).json({ error: 'No such join request.' });
+  saveDB();
+  res.json(conv);
+});
+
 app.post('/api/conversations/:id/participants', requireAuth, (req, res) => {
   const conv = db.conversations.find(c => c.id === req.params.id);
   if (!conv) return res.status(404).json({ error: 'Not found.' });
   if (!conv.participants.includes(req.user.id))
     return res.status(403).json({ error: 'Only participants can add others.' });
 
-  const email = req.body.email?.toLowerCase()?.trim();
+  if (typeof req.body.email !== 'string')
+    return res.status(400).json({ error: 'email is required.' });
+  const email = req.body.email.toLowerCase().trim();
   if (!email) return res.status(400).json({ error: 'email is required.' });
+  // Every other email field is bounded; this one persisted whatever it was sent.
+  if (email.length > 254) return res.status(400).json({ error: 'Email address is too long.' });
+  if (!email.includes('@')) return res.status(400).json({ error: 'Please enter a valid email address.' });
 
   const target = db.users.find(u => u.email === email);
   if (!target) {
@@ -1055,6 +1219,8 @@ app.put('/api/posts/:id', requireAuth, (req, res) => {
   const admin   = isSiteAdmin(req);
   const isOwner = post.authorId === req.user.id;
   if (!isOwner && !admin) return res.status(403).json({ error: 'Not your post.' });
+  if (admin && !isOwner)
+    console.log(`[moderation] ${req.account.email} edited post ${post.id} by ${post.authorId}`);
 
   const { content, draft, sources } = req.body;
 
@@ -1110,6 +1276,8 @@ app.delete('/api/posts/:id', requireAuth, (req, res) => {
   const admin = isSiteAdmin(req);
   if (post.authorId !== req.user.id && !admin)
     return res.status(403).json({ error: 'Not your post.' });
+  if (admin && post.authorId !== req.user.id)
+    console.log(`[moderation] ${req.account.email} deleted post ${post.id} by ${post.authorId}`);
   if (!admin && !post.draft && !withinEditWindow(post))
     return res.status(403).json({ error: 'The 24-hour window for deleting this post has passed.' });
   db.posts.splice(idx, 1);
@@ -1126,15 +1294,37 @@ app.post('/api/comments', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'conversationId and content are required.' });
   if (typeof content !== 'string' || content.length > 5000)
     return res.status(400).json({ error: 'Comment too long (max 5 000 chars).' });
-  if (!db.conversations.some(c => c.id === conversationId))
+  const conv = db.conversations.find(c => c.id === conversationId);
+  if (!conv) return res.status(404).json({ error: 'Conversation not found.' });
+  // Mirror the read predicate: a draft is invisible to everyone but its creator,
+  // so it must be uncommentable by everyone else too. 404 rather than 403, so a
+  // draft's existence is not disclosed.
+  if (conv.draft && conv.creatorId !== req.user.id)
     return res.status(404).json({ error: 'Conversation not found.' });
-  if (postId && !db.posts.some(p => p.id === postId && p.conversationId === conversationId))
-    return res.status(400).json({ error: 'That post is not part of this conversation.' });
+
+  let post = null;
+  if (postId) {
+    post = db.posts.find(p => p.id === postId && p.conversationId === conversationId);
+    if (!post) return res.status(400).json({ error: 'That post is not part of this conversation.' });
+    if (post.draft && post.authorId !== req.user.id)
+      return res.status(404).json({ error: 'Conversation not found.' });
+  }
+
+  // An annotation must quote text that genuinely appears in the post. Without
+  // this the quoted string is arbitrary, which is how a crafted selection could
+  // corrupt the rendered page.
+  let cleanSelectedText = null;
+  if (post && selectedText) {
+    cleanSelectedText = String(selectedText).slice(0, 2000);
+    if (!post.content.includes(cleanSelectedText))
+      return res.status(400).json({ error: 'That selection is not part of this post.' });
+  }
+
   const comment = {
     id: uid(), conversationId,
     postId:       postId       || null,
     authorId:     req.user.id,
-    selectedText: selectedText ? String(selectedText).slice(0, 2000) : null,
+    selectedText: cleanSelectedText,
     content,
     createdAt: Date.now()
   };
@@ -1277,6 +1467,36 @@ app.post('/api/users/:id/follow', requireAuth, (req, res) => {
   res.json({ following: follower.following.includes(targetId) });
 });
 
+// Self-service account deletion. Cascades exactly like the admin path.
+app.delete('/api/users/me', requireAuth, async (req, res) => {
+  const user = db.users.find(u => u.id === req.user.id);
+  if (!user) return res.status(404).json({ error: 'Account not found.' });
+
+  if (user.passwordHash) {
+    const { password } = req.body;
+    if (!password || typeof password !== 'string')
+      return res.status(400).json({ error: 'Enter your password to delete your account.' });
+    const ok = await bcrypt.compare(password, user.passwordHash);
+    if (!ok) return res.status(401).json({ error: 'That password is not correct.' });
+  } else {
+    // Google-only account: require a freshly minted credential for the SAME
+    // identity, so a stolen session token cannot delete the account by itself.
+    const { googleCredential } = req.body;
+    if (!googleCredential || typeof googleCredential !== 'string')
+      return res.status(400).json({ error: 'Sign in with Google again to confirm.' });
+    let payload;
+    try { payload = await verifyGoogleToken(googleCredential); }
+    catch (e) { return res.status(401).json({ error: 'Could not confirm that Google account.' }); }
+    const email = (payload.email || '').toLowerCase().trim();
+    if (email !== user.email || payload.sub !== user.googleId)
+      return res.status(401).json({ error: 'That Google account does not match this one.' });
+  }
+
+  console.log(`[account] ${user.id} deleted their own account.`);
+  deleteUserCascade(user.id);
+  res.json({ ok: true });
+});
+
 // ─── ADMIN ────────────────────────────────────────────────────────────────────
 // Protected by a separate ADMIN_SECRET env var — never the same as JWT_SECRET.
 // Both are declared and validated at the top of this file.
@@ -1302,7 +1522,7 @@ function moderationView(u) {
     verified: u.verified,
     idSubmitted: u.idSubmitted,
     idRejected: !!u.idRejected,
-    idFileName: u.idFileName,
+    idSubmittedAt: u.idSubmittedAt || null,
     emailVerified: !!u.emailVerified,
     createdAt: u.createdAt
   };
@@ -1333,25 +1553,140 @@ app.get('/api/moderation/users', requireAuth, requireSiteAdmin, (req, res) => {
   res.json(db.users.map(moderationView));
 });
 
-app.patch('/api/moderation/users/:id/verify', requireAuth, requireSiteAdmin, (req, res) => {
+app.patch('/api/moderation/users/:id/verify', requireAuth, requireSiteAdmin, requireStepUp, (req, res) => {
   const user = db.users.find(u => u.id === req.params.id);
   if (!user) return res.status(404).json({ error: 'User not found.' });
   user.verified = true;
   user.idRejected = false;
+  // The decision is the point at which the document stops being needed.
+  deleteIdDocFile(user);
+  user.idSubmitted = false;
+  delete user.idMimeExt;
+  delete user.idSubmittedAt;
   saveDB();
   console.log(`[moderation] ${req.account.email} verified ${user.id}`);
   res.json(moderationView(user));
 });
 
-app.patch('/api/moderation/users/:id/reject', requireAuth, requireSiteAdmin, (req, res) => {
+app.patch('/api/moderation/users/:id/reject', requireAuth, requireSiteAdmin, requireStepUp, (req, res) => {
   const user = db.users.find(u => u.id === req.params.id);
   if (!user) return res.status(404).json({ error: 'User not found.' });
   user.verified = false;
   user.idSubmitted = false;
   user.idRejected = true;
+  deleteIdDocFile(user);
+  delete user.idMimeExt;
+  delete user.idSubmittedAt;
   saveDB();
   console.log(`[moderation] ${req.account.email} rejected ${user.id}`);
   res.json(moderationView(user));
+});
+
+// ─── ID DOCUMENTS ─────────────────────────────────────────────────────────────
+
+// Submitted by the account holder, after registration. Registration itself stays
+// unauthenticated, and accepting file uploads on an unauthenticated route would
+// be an obvious abuse surface.
+app.post('/api/users/:id/id-document', requireAuth, (req, res) => {
+  if (req.user.id !== req.params.id)
+    return res.status(403).json({ error: 'You can only submit your own ID.' });
+  if (!ID_KEY_READY)
+    return res.status(503).json({ error: 'Identity verification is temporarily unavailable. Please try again later.' });
+
+  const user = db.users.find(u => u.id === req.params.id);
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  if (!idUploadAllowed(user.id))
+    return res.status(429).json({ error: 'Please wait a few minutes before submitting another photo.' });
+
+  const { image } = req.body;
+  if (typeof image !== 'string')
+    return res.status(400).json({ error: 'An image is required.' });
+  // Bound the encoded string before decoding, so an oversized body is rejected
+  // without first being materialised into a Buffer.
+  if (image.length > Math.ceil(MAX_ID_BYTES * 4 / 3) + 128)
+    return res.status(400).json({ error: 'That image is too large. Please use a photo under 3 MB.' });
+
+  const decoded = decodeImage(image);
+  if (!decoded)
+    return res.status(400).json({ error: 'Please upload a PNG, JPEG, GIF, or WebP image.' });
+  if (decoded.buffer.length > MAX_ID_BYTES)
+    return res.status(400).json({ error: 'That image is too large. Please use a photo under 3 MB.' });
+
+  let encrypted;
+  try {
+    encrypted = encryptIdBuffer(decoded.buffer, decoded.ext);
+  } catch (e) {
+    console.error(`[id-docs] encryption failed for ${user.id}: ${e.message}`);
+    return res.status(503).json({ error: 'Identity verification is temporarily unavailable.' });
+  }
+
+  const dest = idDocPathFor(user.id);
+  if (!dest) return res.status(500).json({ error: 'Could not store that document.' });
+  const tmp = `${dest}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+  try {
+    fs.writeFileSync(tmp, encrypted, { mode: 0o600 });
+    fs.renameSync(tmp, dest);
+  } catch (e) {
+    console.error(`[id-docs] write failed for ${user.id}: ${e.message}`);
+    try { fs.unlinkSync(tmp); } catch (_) {}
+    return res.status(500).json({ error: 'Could not store that document. Please try again.' });
+  }
+
+  // Metadata only. The bytes never enter the database.
+  user.idSubmitted    = true;
+  user.idRejected     = false;
+  user.idSubmittedAt  = Date.now();
+  user.idMimeExt      = decoded.ext;
+  delete user.idFileName;
+  saveDB();
+  console.log(`[id-docs] ${user.id} submitted a document (${decoded.buffer.length} bytes)`);
+  res.json(pubSelf(user));
+});
+
+// Retrieval is the most sensitive read in the system: session, admin role, AND a
+// fresh step-up. Viewing a government ID is not the same class of act as
+// approving one, and a stolen session token must not be enough on its own.
+app.get('/api/moderation/users/:id/id-document', requireAuth, requireSiteAdmin, requireStepUp, (req, res) => {
+  if (!ID_KEY_READY)
+    return res.status(503).json({ error: 'Identity verification is temporarily unavailable.' });
+
+  const user = db.users.find(u => u.id === req.params.id);
+  if (!user || !user.idSubmitted || !user.idMimeExt)
+    return res.status(404).json({ error: 'No document on file.' });
+
+  const filePath = idDocPathFor(user.id);
+  if (!filePath) return res.status(404).json({ error: 'No document on file.' });
+
+  fs.readFile(filePath, (err, fileBuf) => {
+    if (err) {
+      if (err.code !== 'ENOENT')
+        console.error(`[id-docs] read failed for ${user.id}: ${err.message}`);
+      return res.status(404).json({ error: 'No document on file.' });
+    }
+    let plaintext;
+    try {
+      plaintext = decryptIdBuffer(fileBuf, user.idMimeExt);
+    } catch (e) {
+      // Not auto-deleted: an operator should be able to investigate a document
+      // that fails to decrypt rather than have the evidence removed for them.
+      console.error(`[id-docs] decryption failed for ${user.id}: ${e.message}`);
+      return res.status(500).json({ error: 'This document could not be decrypted.' });
+    }
+
+    console.log(`[id-docs] VIEW user=${user.id} by=${req.account.email} at=${new Date().toISOString()}`);
+
+    // The mirror image of the photo endpoint: cached nowhere, embeddable
+    // nowhere, indexed nowhere.
+    res.setHeader('Content-Type', IMAGE_MIME[user.idMimeExt] || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.setHeader('Content-Disposition', 'inline; filename="id-document"');
+    res.setHeader('Content-Length', plaintext.length);
+    res.end(plaintext);
+  });
 });
 
 // ─── STEP-UP FOR IRREVERSIBLE ACTIONS ─────────────────────────────────────────
@@ -1411,6 +1746,11 @@ app.patch('/api/admin/users/:id/verify', requireAdmin, (req, res) => {
   const user = db.users.find(u => u.id === req.params.id);
   if (!user) return res.status(404).json({ error: 'User not found.' });
   user.verified = true;
+  user.idRejected = false;          // had drifted from the moderation path
+  deleteIdDocFile(user);
+  user.idSubmitted = false;
+  delete user.idMimeExt;
+  delete user.idSubmittedAt;
   saveDB();
   res.json({ ok: true });
 });
@@ -1421,6 +1761,9 @@ app.patch('/api/admin/users/:id/reject', requireAdmin, (req, res) => {
   user.verified = false;
   user.idSubmitted = false;
   user.idRejected = true;
+  deleteIdDocFile(user);
+  delete user.idMimeExt;
+  delete user.idSubmittedAt;
   saveDB();
   res.json({ ok: true });
 });
@@ -1437,11 +1780,22 @@ function deleteUserCascade(id) {
   if (idx === -1) return false;
 
   removePhotoFile(db.users[idx]);
+  deleteIdDocFile(db.users[idx]);
 
   const convIds = db.conversations.filter(c => c.creatorId === id).map(c => c.id);
+  // Computed BEFORE posts are filtered: exactly the posts about to disappear.
+  // Comments hanging off them would otherwise survive with a dangling postId,
+  // invisible to every reader and accumulating forever.
+  const removedPostIds = new Set(
+    db.posts.filter(p => p.authorId === id || convIds.includes(p.conversationId)).map(p => p.id)
+  );
   db.conversations = db.conversations.filter(c => c.creatorId !== id);
   db.posts    = db.posts.filter(p => p.authorId !== id && !convIds.includes(p.conversationId));
-  db.comments = db.comments.filter(c => c.authorId !== id && !convIds.includes(c.conversationId));
+  db.comments = db.comments.filter(c =>
+    c.authorId !== id &&
+    !convIds.includes(c.conversationId) &&
+    !(c.postId && removedPostIds.has(c.postId))
+  );
   db.invitations = db.invitations.filter(i => i.invitedBy !== id);
   db.conversations.forEach(c => {
     c.participants = (c.participants || []).filter(p => p !== id);
@@ -1469,6 +1823,46 @@ app.delete('/api/admin/reset-content', requireAdmin, (req, res) => {
   saveDB();
   res.json({ ok: true, message: 'All conversations, posts, and comments deleted.' });
 });
+
+// ─── ID DOCUMENT RETENTION ────────────────────────────────────────────────────
+// A document that nobody reviews must not sit on disk indefinitely. The policy
+// says it is deleted after this window, so it has to actually be.
+function sweepExpiredIdDocs() {
+  const cutoff = Date.now() - ID_DOC_MAX_AGE_MS;
+  let swept = 0;
+  db.users.forEach(u => {
+    if (!u.idSubmitted || !u.idSubmittedAt || u.idSubmittedAt > cutoff) return;
+    deleteIdDocFile(u);
+    u.idSubmitted = false;
+    delete u.idMimeExt;
+    delete u.idSubmittedAt;
+    u.idExpiredUnreviewed = true;
+    swept++;
+  });
+  if (swept) { saveDB(); console.log(`[id-docs] swept ${swept} unreviewed document(s) past retention.`); }
+}
+
+// Files with no live record: a crash between writing one and saving the database,
+// or an account removed by an older code path.
+function sweepOrphanedIdDocs() {
+  try {
+    const live = new Set(db.users.filter(u => u.idSubmitted).map(u => `${u.id}.id.enc`));
+    fs.readdirSync(ID_DOCS_DIR).forEach(name => {
+      if (name.endsWith('.tmp')) {
+        try { fs.unlinkSync(path.join(ID_DOCS_DIR, name)); } catch (_) {}
+        return;
+      }
+      if (!name.endsWith('.id.enc') || live.has(name)) return;
+      try { fs.unlinkSync(path.join(ID_DOCS_DIR, name)); console.log(`[id-docs] swept orphaned ${name}`); } catch (_) {}
+    });
+  } catch (e) {
+    console.warn('[id-docs] could not sweep orphaned documents:', e.message);
+  }
+}
+
+sweepOrphanedIdDocs();
+sweepExpiredIdDocs();
+setInterval(() => { sweepExpiredIdDocs(); sweepOrphanedIdDocs(); }, ID_DOC_SWEEP_INTERVAL_MS).unref();
 
 // ─── ERROR HANDLING ───────────────────────────────────────────────────────────
 

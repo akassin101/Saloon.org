@@ -36,26 +36,38 @@
   <p>Saloon ("we," "us," or "our") operates saloon.org. This policy explains what information we collect, how we use it, and your rights.</p>
 
   <h2>Information We Collect</h2>
-  <p><strong>Account information.</strong> When you register, we collect your name, email address, and a photo ID. Your name and email are stored on our servers. Your photo ID is used solely to verify your real identity and is not retained after verification is complete.</p>
+  <p><strong>Account information.</strong> When you register, we collect your name and email address, and store them on our servers. Your email address is shown only to you and to the site administrator; it is never displayed to other users.</p>
+  <p><strong>Photo ID.</strong> To publish, you submit a photo of an identity document. What happens to it is set out under Identity Verification below.</p>
   <p><strong>Google Sign-In.</strong> If you sign in with Google, we receive your name and email address from Google. We do not receive your Google password or payment information.</p>
   <p><strong>Content you post.</strong> Conversations, comments, and profile information you submit are stored on our servers and visible to other users.</p>
-  <p><strong>Usage data.</strong> We collect basic server logs (IP address, request times) for security and debugging purposes.</p>
+  <p><strong>Profile photo.</strong> If you add one, it is served from a public address with a long browser cache. It is visible to anyone on the internet, not only to signed-in members, and copies already cached elsewhere may persist after you remove it. Please do not upload a photo you would not want publicly linkable.</p>
+  <p><strong>Session token.</strong> Signing in issues a signed token that your browser keeps in local storage so you stay signed in. It lasts 30 days or until you sign out.</p>
+  <p><strong>IP address.</strong> We read it on each request to apply rate limits and to avoid counting the same reader twice. It is not written into our database and we do not keep a log of it against your account.</p>
 
   <h2>How We Use Your Information</h2>
   <p>We use your information to operate Saloon — to authenticate you, display your profile, and facilitate conversations. We do not sell your data to third parties. We do not use your data for advertising.</p>
 
   <h2>Identity Verification</h2>
-  <p>Saloon requires real-name participation. Your submitted ID is reviewed by an administrator to confirm your identity matches your registered name. IDs are handled confidentially and are not shared with other users.</p>
+  <p>Saloon requires real-name participation to publish. When you submit an identity document:</p>
+  <ul>
+    <li>It is uploaded over an encrypted connection and stored encrypted at rest, separately from the main database.</li>
+    <li>Only the site administrator can open it, through an authenticated interface that requires a second confirmation step.</li>
+    <li>It is deleted permanently as soon as your submission is approved or rejected.</li>
+    <li>If nobody reviews it, it is deleted automatically after 14 days.</li>
+    <li>It is never shown to other users, never public, and never cached.</li>
+  </ul>
+  <p>We use it only to check that your identity matches the name on your account.</p>
 
   <h2>Data Retention</h2>
-  <p>Your account data is retained as long as your account is active. You may request deletion of your account by contacting us. Content you have posted may remain visible after deletion at our discretion.</p>
+  <p>Your account data is kept while your account exists. Identity documents follow the shorter schedule above regardless of how long your account stays open.</p>
+  <p>You can delete your account yourself from your profile page. You will be asked to confirm first &mdash; by re-entering your password, or by signing in with Google again if that is how you sign in. Deleting an account removes your profile, your conversations, your posts and comments, your profile photo, and any identity document still on file. This cannot be undone.</p>
 
   <h2>Third-Party Services</h2>
   <p>We use the following third-party services:</p>
   <p><strong>Google Identity Services</strong> — for optional Google Sign-In. Subject to <a href="https://policies.google.com/privacy" target="_blank">Google's Privacy Policy</a>.</p>
   <p><strong>Resend</strong> — for transactional email delivery (verification and password reset emails).</p>
   <p><strong>Railway</strong> — for server hosting and data storage.</p>
-  <p><strong>Netlify</strong> — for frontend hosting.</p>
+  <p><strong>GitHub Pages</strong> — for hosting the pages you read, including this one.</p>
 
   <h2>Cookies and Local Storage</h2>
   <p>We use browser local storage to keep you signed in between sessions. We do not use third-party tracking cookies.</p>
