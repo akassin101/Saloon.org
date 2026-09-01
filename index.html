@@ -369,19 +369,6 @@
     font-family: var(--font-ui);
     margin-top: 18px;
   }
-  .id-upload-area {
-    border: 2px dashed var(--border);
-    border-radius: var(--radius);
-    padding: 22px;
-    text-align: center;
-    cursor: pointer;
-    transition: border-color 0.15s;
-    font-family: var(--font-ui);
-    font-size: 14px;
-    color: var(--muted);
-  }
-  .id-upload-area:hover, .id-upload-area.has-file { border-color: var(--accent); color: var(--accent); }
-  .id-upload-area input[type="file"] { display: none; }
 
   /* CONVERSATION PAGE */
   .conv-header {
@@ -773,6 +760,20 @@
     cursor: zoom-out;
   }
   #photo-lightbox.open { display: flex; }
+  #id-review-modal {
+    display: none; position: fixed; inset: 0; z-index: 1200;
+    background: rgba(0,0,0,.72); align-items: center; justify-content: center; padding: 20px;
+  }
+  #id-review-modal.open { display: flex; }
+  #id-review-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 20px; max-width: 680px; width: 100%; max-height: 90vh; overflow: auto;
+  }
+  #id-review-who { font-family: var(--font-ui); font-weight: 600; margin-bottom: 6px; }
+  #id-review-note { font-family: var(--font-ui); font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+  #id-review-status { font-family: var(--font-ui); font-size: 13px; color: var(--muted); }
+  #id-review-img { max-width: 100%; max-height: 65vh; display: block; margin: 0 auto; border-radius: 4px; }
+  #id-review-img:not([src]) { display: none; }
   #photo-lightbox img { max-width: 80vw; max-height: 80vh; border-radius: 8px; }
   .profile-info { flex: 1; min-width: 0; }
   .profile-name {
@@ -979,6 +980,9 @@
 <div id="page-profile" style="display:none"></div>
 <div id="page-draft" style="display:none"></div>
 <div id="page-admin" style="display:none"></div>
+<div id="page-id-upload" style="display:none"></div>
+<div id="page-id-pending" style="display:none"></div>
+<div id="page-id-rejected" style="display:none"></div>
 
 <div id="annotation-trigger" onmousedown="event.preventDefault()">✦ Annotate selection</div>
 
@@ -1040,6 +1044,15 @@
 
 <div id="toast"></div>
 <div id="photo-lightbox" onclick="closeLightbox()"><img id="photo-lightbox-img" src="" alt="Profile photo"></div>
+<div id="id-review-modal">
+  <div id="id-review-card">
+    <div id="id-review-who"></div>
+    <div id="id-review-note">Check this against the name above. The document is deleted permanently once you verify or reject.</div>
+    <div id="id-review-status"></div>
+    <img id="id-review-img" alt="Submitted identity document">
+    <div style="text-align:right;margin-top:12px"><button class="btn-ghost btn-sm" onclick="closeIdReview()">Close</button></div>
+  </div>
+</div>
 <input type="file" id="profile-photo-input" accept="image/*" style="display:none" onchange="handleProfilePhotoUpload(event)">
 
 <script>
@@ -1144,7 +1157,7 @@ const DB = {
   save() {
     _scoreCache.clear();
     try {
-      // ID data is intentionally excluded — stored separately in IDSTORE
+      // ID data is intentionally excluded from persisted user records.
       const payload = {
         users: DB.users.map(u => {
           // Never persist the raw ID image, nor a legacy inline photo: an old
@@ -1181,28 +1194,6 @@ const DB = {
   uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 };
 
-// ─── ID STORE (isolated from main DB) ────────────────────────────────────────
-// ID images are kept in a separate, obfuscated key so they are not
-// bundled with general user data and cannot be accessed via the main DB object.
-
-const IDSTORE = {
-  _key(userId) {
-    // Slightly obfuscated key — not security through obscurity alone, but
-    // ensures casual DB inspection doesn't surface raw ID images.
-    return 'sl_' + btoa(userId).replace(/=/g,'') + '_id';
-  },
-  set(userId, dataUrl) {
-    try { localStorage.setItem(this._key(userId), dataUrl); } catch(e) {}
-  },
-  has(userId) {
-    return !!localStorage.getItem(this._key(userId));
-  },
-  // No public get() — ID data should never be read back into the app.
-  // A real deployment would send the file to a secure server endpoint instead.
-  clear(userId) {
-    try { localStorage.removeItem(this._key(userId)); } catch(e) {}
-  }
-};
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
@@ -1279,15 +1270,13 @@ function logout() {
   navigate('home');
 }
 
-function register(firstName, lastName, email, password, idFile, idFileName) {
+function register(firstName, lastName, email, password) {
   if (!firstName || firstName.length < 1) return 'Please enter your first name.';
   if (!lastName || lastName.length < 1) return 'Please enter your last name.';
   if (!email || !email.includes('@')) return 'Please enter a valid email address.';
   if (DB.users.find(u => u.email.toLowerCase() === email.toLowerCase().trim()))
     return 'An account with that email already exists.';
   if (password.length < 6) return 'Password must be at least 6 characters.';
-  if (!idFile) return 'Please upload a valid photo ID.';
-  // Zero out the in-memory variable immediately after validation — it will go to IDSTORE only
 
   const u = {
     id: DB.uid(),
@@ -1295,13 +1284,11 @@ function register(firstName, lastName, email, password, idFile, idFileName) {
     lastName: lastName.trim(),
     email: email.toLowerCase().trim(),
     passwordHash: hashPassword(password),
-    idFileName,           // filename only — never store the raw image in the user record
-    idSubmitted: true,    // flag that ID was provided; actual file is in IDSTORE
+    idSubmitted: false,   // identity is verified after signing up, not during
+    idRejected: false,
     verified: false,
     createdAt: Date.now()
   };
-  // Store the ID image completely separately, isolated from the main DB object
-  IDSTORE.set(u.id, idFile);
   DB.users.push(u);
   // Auto-join any conversations this email was invited to
   const pending = (DB.invitations || []).filter(i => i.email === u.email);
@@ -1353,7 +1340,23 @@ function _setHash(page, id) {
 
 // Every page id, in one place. This list was previously duplicated in four
 // separate literals and they had already drifted apart.
-const PAGES = ['home','login','register','conversation','profile','reset','draft','admin'];
+// Earlier builds stored a government ID in localStorage under
+// 'sl_' + btoa(userId) + '_id' and never removed it. Sweep any that remain.
+function cleanupLegacyIdBlobs() {
+  try {
+    if (localStorage.getItem('sl_id_cleanup_done')) return;
+    const stale = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && /^sl_[A-Za-z0-9+/]+_id$/.test(k)) stale.push(k);
+    }
+    stale.forEach(k => localStorage.removeItem(k));
+    localStorage.setItem('sl_id_cleanup_done', '1');
+    if (stale.length) console.info('[saloon] removed ' + stale.length + ' legacy ID image(s) from this device.');
+  } catch (e) { /* storage unavailable — nothing to clean */ }
+}
+
+const PAGES = ['home','login','register','conversation','profile','reset','draft','admin','id-upload','id-pending','id-rejected'];
 
 function navigate(page, id) {
   // Push current location onto the back-stack before leaving
@@ -1477,6 +1480,9 @@ function renderPage(page, id) {
     case 'reset': renderResetPassword(id); break;
     case 'draft': renderDraftSandbox(id); break;
     case 'admin': renderAdmin(); break;
+    case 'id-upload': renderIdUpload(); break;
+    case 'id-pending': renderIdPending(); break;
+    case 'id-rejected': renderIdRejected(); break;
   }
 }
 
@@ -1818,8 +1824,6 @@ async function doResetPassword(token) {
 
 // ─── REGISTER PAGE ────────────────────────────────────────────────────────────
 
-let pendingIdFile = null;
-let pendingIdFileName = null;
 let pendingGoogleCredential = null;
 let pendingGoogleEmail = null;
 
@@ -1856,14 +1860,7 @@ function renderRegister() {
           <label>Confirm password</label>
           <input type="password" id="reg-password2" placeholder="repeat password" autocomplete="new-password">
         </div>
-        <div class="form-group">
-          <label>Photo ID <span style="text-transform:none;letter-spacing:0;font-size:12px;color:var(--muted)">(government or student ID required)</span></label>
-          <div class="id-upload-area" id="id-upload-area" onclick="document.getElementById('id-file-input').click()">
-            <input type="file" id="id-file-input" accept="image/*,.pdf" onchange="handleIdUpload(event)">
-            <div id="id-upload-label">📄 Click to upload ID (image or PDF)</div>
-          </div>
-          <div class="form-note">Your name will be taken from your ID. In a live deployment, an administrator would verify your ID before activating your account.</div>
-        </div>
+        <div class="form-note" style="margin-bottom:4px">You will confirm your identity later, when you first publish something.</div>
         <div id="reg-error" style="color:var(--danger);font-size:13px;font-family:var(--font-ui);margin-top:-4px;display:none"></div>
         <div class="form-actions">
           <button class="btn-primary" onclick="doRegister()">Create account</button>
@@ -1874,17 +1871,6 @@ function renderRegister() {
       </div>
     </div>
   `;
-  pendingIdFile = null; pendingIdFileName = null;
-}
-
-function handleIdUpload(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-  document.getElementById('id-upload-area').classList.add('has-file');
-  document.getElementById('id-upload-label').textContent = '✓ ' + file.name;
-  const reader = new FileReader();
-  reader.onload = ev => { pendingIdFile = ev.target.result; pendingIdFileName = file.name; };
-  reader.readAsDataURL(file);
 }
 
 async function doRegister() {
@@ -1905,17 +1891,12 @@ async function doRegister() {
       if (password.length < 6) { errEl.textContent = 'Password must be at least 6 characters.'; errEl.style.display = ''; return; }
       if (password !== password2) { errEl.textContent = 'Passwords do not match.'; errEl.style.display = ''; return; }
     }
-    if (!pendingIdFile) { errEl.textContent = 'Please upload a valid photo ID.'; errEl.style.display = ''; return; }
     if (btn) btn.disabled = true;
     try {
       const res = await apiCall('POST', '/api/auth/register', {
         firstName, lastName, email,
-        ...(pendingGoogleCredential ? { googleCredential: pendingGoogleCredential } : { password }),
-        idFileName: pendingIdFileName || ''
+        ...(pendingGoogleCredential ? { googleCredential: pendingGoogleCredential } : { password })
       });
-      // Store ID image locally in IDSTORE (never sent to server in full)
-      IDSTORE.set(res.user.id, pendingIdFile);
-      pendingIdFile = null;
       pendingGoogleCredential = null;
       pendingGoogleEmail = null;
       const idx = DB.users.findIndex(u => u.id === res.user.id);
@@ -1951,14 +1932,13 @@ async function doRegister() {
     if (btn) btn.disabled = false;
   } else {
     // Local mode
-    const err = register(firstName, lastName, email, password, pendingIdFile, pendingIdFileName);
+    const err = register(firstName, lastName, email, password);
     if (err) {
       errEl.textContent = err; errEl.style.display = '';
     } else {
-      pendingIdFile = null;
       renderNav();
       navigate('home');
-      toast('Welcome to Saloon, ' + displayName(currentUser) + '. Your ID is pending review.');
+      toast('Welcome to Saloon, ' + displayName(currentUser) + '.');
     }
   }
 }
@@ -1983,7 +1963,14 @@ function trackView(id) {
     .then(data => {
       if (data && data.viewCount !== undefined) {
         const c = DB.conversations.find(x => x.id === id);
-        if (c) { c.viewCount = data.viewCount; DB.save(); renderConversation(id); }
+        if (c) {
+          c.viewCount = data.viewCount;
+          DB.save();
+          // Same guard hydrateAfterLoad uses: this fires on its own schedule and
+          // would otherwise discard whatever the reader has started typing.
+          if (!editingPostId && !editingSourcesPostId && !editingTitle && !editingCategory)
+            renderConversation(id);
+        }
       }
     })
     .catch(() => {});
@@ -2206,6 +2193,245 @@ const EDIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 // offers — the server re-checks every privileged action.
 function isAdmin() { const u = getAuthUser(); return !!u && (u.isAdmin === true || u.email === ADMIN_EMAIL); }
 
+// Requests a fresh Google credential for a one-off confirmation, restoring the
+// normal sign-in callback afterwards so ordinary sign-in is unaffected.
+function promptGoogleCredential() {
+  return new Promise(resolve => {
+    if (typeof google === 'undefined' || !google.accounts || !google.accounts.id) {
+      toast('Google sign-in is not available right now.');
+      return resolve(null);
+    }
+    let settled = false;
+    const done = v => { if (settled) return; settled = true;
+      try { google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleGoogleCredential }); } catch (e) {}
+      resolve(v);
+    };
+    try {
+      google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: r => done(r && r.credential ? r.credential : null)
+      });
+      google.accounts.id.prompt(n => {
+        if (n && (n.isNotDisplayed && n.isNotDisplayed() || n.isSkippedMoment && n.isSkippedMoment())) {
+          toast('Could not open Google sign-in. Please try again.');
+          done(null);
+        }
+      });
+    } catch (e) { done(null); }
+    setTimeout(() => done(null), 60000);
+  });
+}
+
+// Deleting your own account is as irreversible as an administrator doing it, so
+// it asks for the password again rather than trusting a month-old session token.
+async function deleteMyAccount() {
+  const auth = getAuthUser();
+  if (!auth) return;
+  if (!confirm('Delete your account permanently? This removes your conversations, posts, comments and photo, and cannot be undone.')) return;
+
+  let body;
+  if (auth.hasPassword === false) {
+    // A Google account has no password to re-enter. Confirm by signing in with
+    // Google again, so a stolen session token is not enough on its own.
+    const credential = await promptGoogleCredential();
+    if (!credential) return;
+    body = { googleCredential: credential };
+  } else {
+    const pw = prompt('Enter your password to confirm.');
+    if (!pw) return;
+    body = { password: pw };
+  }
+  try {
+    await apiCall('DELETE', '/api/users/me', body);
+  } catch (e) {
+    toast(e.message || 'Could not delete your account.');
+    return;
+  }
+  localStorage.removeItem('saloon_jwt');
+  localStorage.removeItem('saloon_session');
+  localStorage.removeItem('saloon_v1');
+  currentUser = null;
+  adminUsers = null; adminStepUp = null;
+  toast('Your account has been deleted.');
+  navigate('home');
+}
+
+// ─── IDENTITY VERIFICATION ────────────────────────────────────────────────────
+// An ID must stay legible — a reviewer has to read a name and a date — so this
+// keeps far more detail than the 480px avatar path.
+const ID_MAX_DIM = 1600;
+const ID_QUALITY = 0.90;
+
+let pendingIdImage = null;      // in memory only, never persisted
+let idUploadInFlight = false;
+
+async function downscaleIdImage(file) {
+  let source, usedBitmap = false;
+  try {
+    source = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    usedBitmap = true;
+  } catch (e) {
+    source = await new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload  = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('could not decode image')); };
+      img.src = url;
+    });
+  }
+  const sw = source.width, sh = source.height;
+  if (!sw || !sh) throw new Error('image has no dimensions');
+  const scale = Math.min(1, ID_MAX_DIM / Math.max(sw, sh));
+  const w = Math.max(1, Math.round(sw * scale)), h = Math.max(1, Math.round(sh * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  // No white flatten and no padding: a document keeps its own aspect ratio.
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(source, 0, 0, w, h);
+  if (usedBitmap && source.close) source.close();
+  const blob = await new Promise((res, rej) =>
+    canvas.toBlob(b => b ? res(b) : rej(new Error('could not encode image')), 'image/jpeg', ID_QUALITY));
+  const dataUri = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = () => rej(r.error || new Error('could not read image'));
+    r.readAsDataURL(blob);
+  });
+  return { dataUri, width: w, height: h, bytes: blob.size };
+}
+
+function renderIdUpload() {
+  const auth = getAuthUser();
+  if (!auth) { navigate('login'); return; }
+  pendingIdImage = null;
+  document.getElementById('page-id-upload').innerHTML = `
+    <div class="container">
+      <div class="auth-card" style="max-width:520px">
+        <h2>Verify your identity</h2>
+        <p class="auth-sub">Saloon asks everyone to confirm who they are before their words go up under their name.</p>
+        <p style="font-family:var(--font-ui);font-size:13px;color:var(--muted);line-height:1.65;margin:0 0 18px">
+          Upload a photo of a government or student ID. It is encrypted before it is stored,
+          seen only by an administrator doing the one-time review, and permanently deleted
+          the moment that review is finished. It is never shown to anyone else and never
+          made public. You can keep reading and writing drafts while you wait.
+        </p>
+        <input type="file" id="id-file-input" accept="image/*" style="display:none" onchange="handleIdSelect(event)">
+        <button class="btn-ghost" style="width:100%;padding:22px" onclick="document.getElementById('id-file-input').click()">
+          Choose a photo of your ID
+        </button>
+        <div id="id-preview-wrap" style="display:none;margin-top:14px;text-align:center">
+          <img id="id-preview-img" alt="Your ID, ready to submit" style="max-width:100%;max-height:280px;border:1px solid var(--border);border-radius:4px">
+          <div style="margin-top:8px">
+            <button class="btn-ghost btn-sm" onclick="document.getElementById('id-file-input').click()">Choose a different photo</button>
+          </div>
+        </div>
+        <div id="id-upload-error" style="color:#c0392b;font-family:var(--font-ui);font-size:13px;margin-top:12px;display:none"></div>
+        <div style="display:flex;gap:8px;margin-top:18px">
+          <button class="btn-primary" id="id-upload-submit" disabled onclick="submitIdUpload()">Submit for review</button>
+          <button class="btn-ghost" onclick="navigate('home')">Not now</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function handleIdSelect(e) {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const errEl = document.getElementById('id-upload-error');
+  const show = msg => { errEl.textContent = msg; errEl.style.display = ''; };
+  errEl.style.display = 'none';
+
+  if (/pdf$/i.test(file.type) || /\.pdf$/i.test(file.name || ''))
+    return show('Please upload a photo of your ID rather than a PDF.');
+  if (!/^image\//.test(file.type || ''))
+    return show('Please choose an image file.');
+  if (file.size > 20 * 1024 * 1024)
+    return show('That image is too large. Please choose one under 20 MB.');
+
+  try {
+    const out = await downscaleIdImage(file);
+    pendingIdImage = out.dataUri;
+    document.getElementById('id-preview-img').src = out.dataUri;
+    document.getElementById('id-preview-wrap').style.display = '';
+    document.getElementById('id-upload-submit').disabled = false;
+  } catch (err) {
+    console.warn('[id] could not process image', err);
+    show('Could not read that image. If it is a HEIC photo from an iPhone, try taking a new photo instead, or switch Settings > Camera > Formats to "Most Compatible".');
+  }
+}
+
+async function submitIdUpload() {
+  const auth = getAuthUser();
+  if (!auth || !pendingIdImage || idUploadInFlight) return;
+  idUploadInFlight = true;
+  const btn = document.getElementById('id-upload-submit');
+  if (btn) { btn.disabled = true; btn.textContent = 'Submitting...'; }
+  try {
+    const updated = await apiCall('POST', '/api/users/' + auth.id + '/id-document', { image: pendingIdImage });
+    pendingIdImage = null;                       // never lingers in memory either
+    if (currentUser) { currentUser.idSubmitted = true; currentUser.idRejected = false; }
+    const idx = DB.users.findIndex(u => u.id === auth.id);
+    if (idx >= 0) DB.users[idx] = { ...DB.users[idx], idSubmitted: true, idRejected: false };
+    DB.save();
+    renderNav();
+    navigate('id-pending');
+  } catch (err) {
+    const errEl = document.getElementById('id-upload-error');
+    errEl.textContent = err.message || 'Could not submit your ID. Please try again.';
+    errEl.style.display = '';
+    if (btn) { btn.disabled = false; btn.textContent = 'Submit for review'; }
+  } finally {
+    idUploadInFlight = false;
+  }
+}
+
+function renderIdPending() {
+  document.getElementById('page-id-pending').innerHTML = `
+    <div class="container">
+      <div class="auth-card" style="max-width:480px;text-align:center">
+        <h2>Your ID is being reviewed</h2>
+        <p class="auth-sub">Usually within a day or two.</p>
+        <p style="font-family:var(--font-ui);font-size:13px;color:var(--muted);line-height:1.65">
+          It is encrypted, only an administrator can open it, and it is deleted
+          permanently as soon as the review is done. Keep reading and drafting in
+          the meantime — you will be able to publish as soon as you are verified.
+        </p>
+        <div style="margin-top:18px"><button class="btn-ghost" onclick="navigate('home')">Back to Saloon</button></div>
+      </div>
+    </div>`;
+}
+
+function renderIdRejected() {
+  document.getElementById('page-id-rejected').innerHTML = `
+    <div class="container">
+      <div class="auth-card" style="max-width:480px;text-align:center">
+        <h2>That ID could not be verified</h2>
+        <p class="auth-sub">The photo did not clearly show a readable ID.</p>
+        <p style="font-family:var(--font-ui);font-size:13px;color:var(--muted);line-height:1.65">
+          The usual causes are blur, glare, a cropped corner, or a photo of a screen
+          rather than the card itself. You are welcome to try again.
+        </p>
+        <div style="margin-top:18px"><button class="btn-primary" onclick="navigate('id-upload')">Try again</button></div>
+      </div>
+    </div>`;
+}
+
+// Publishing under your own name is the point at which identity has to be
+// settled — not registration, which is why it is asked for here.
+function requireIdVerification() {
+  const auth = getAuthUser();
+  if (!auth) { navigate('login'); return false; }
+  if (auth.verified) return true;
+  if (auth.idRejected)  { navigate('id-rejected'); return false; }
+  if (auth.idSubmitted) { navigate('id-pending');  return false; }
+  toast('Verify your identity to publish.');
+  navigate('id-upload');
+  return false;
+}
+
 // ─── ADMIN (site owner) ───────────────────────────────────────────────────────
 // The moderation queue, usable from the live site while signed in as the owner.
 //
@@ -2242,7 +2468,8 @@ function renderAdminRow(u) {
               : u.idSubmitted ? '<span class="badge pending">ID pending</span>'
               : u.idRejected  ? '<span class="badge rejected">Rejected</span>' : '';
   const review = u.idSubmitted && !u.verified
-    ? `<button class="btn-primary btn-sm" onclick="adminVerify('${u.id}')">Verify</button>
+    ? `<button class="btn-ghost btn-sm" onclick="openIdReview('${u.id}')">View ID</button>
+       <button class="btn-primary btn-sm" onclick="adminVerify('${u.id}')">Verify</button>
        <button class="btn-ghost btn-sm" onclick="adminReject('${u.id}')">Reject</button>`
     : '';
   return `
@@ -2251,7 +2478,7 @@ function renderAdminRow(u) {
         <div class="follow-name" onclick="navigate('profile','${u.id}')">${esc(displayName(u))} ${badge}</div>
         <div class="follow-bio">
           ${esc(u.email)}${u.emailVerified ? '' : ' &middot; email unconfirmed'}
-          ${u.idFileName ? ' &middot; ID: ' + esc(u.idFileName) : ''}
+          ${u.idSubmittedAt ? ' &middot; ID submitted ' + timeAgo(u.idSubmittedAt) : ''}
           &middot; joined ${timeAgo(u.createdAt)}
         </div>
       </div>
@@ -2321,21 +2548,82 @@ function setAdminSearch(value) {
 
 async function adminVerify(userId) {
   if (!isAdmin()) return;
+  if (!confirm('Verify this person? Their ID document is deleted permanently once you decide.')) return;
+  const token = await ensureStepUp();
+  if (!token) return;
   try {
-    const updated = await apiCall('PATCH', '/api/moderation/users/' + userId + '/verify');
+    const updated = await apiCall('PATCH', '/api/moderation/users/' + userId + '/verify', null, { 'x-step-up': token });
+    closeIdReview();
     adminApplyUpdate(updated);
     toast('Verified.');
-  } catch (e) { toast(e.message || 'Could not verify that account.'); }
+  } catch (e) {
+    if (e.message && /expired|admin key/i.test(e.message)) adminStepUp = null;
+    toast(e.message || 'Could not verify that account.');
+  }
 }
 
 async function adminReject(userId) {
   if (!isAdmin()) return;
-  if (!confirm('Reject this ID submission? They will need to submit again.')) return;
+  if (!confirm('Reject this submission? Their ID document is deleted permanently and they will need to submit again.')) return;
+  const token = await ensureStepUp();
+  if (!token) return;
   try {
-    const updated = await apiCall('PATCH', '/api/moderation/users/' + userId + '/reject');
+    const updated = await apiCall('PATCH', '/api/moderation/users/' + userId + '/reject', null, { 'x-step-up': token });
+    closeIdReview();
     adminApplyUpdate(updated);
     toast('Rejected.');
-  } catch (e) { toast(e.message || 'Could not reject that submission.'); }
+  } catch (e) {
+    if (e.message && /expired|admin key/i.test(e.message)) adminStepUp = null;
+    toast(e.message || 'Could not reject that submission.');
+  }
+}
+
+// The document endpoint is authenticated and step-up gated, so it cannot be a
+// plain <img src>. Fetch the bytes, show them from a blob URL, and revoke it
+// afterwards so the decoded image does not linger.
+let idReviewBlobUrl = null;
+
+async function openIdReview(userId) {
+  if (!isAdmin()) return;
+  const u = (adminUsers || []).find(x => x.id === userId);
+  if (!u) return;
+  const token = await ensureStepUp();
+  if (!token) return;
+
+  const modal = document.getElementById('id-review-modal');
+  document.getElementById('id-review-who').textContent = displayName(u) + ' — ' + u.email;
+  document.getElementById('id-review-status').textContent = 'Loading document...';
+  document.getElementById('id-review-img').removeAttribute('src');
+  modal.classList.add('open');
+
+  try {
+    const jwt = localStorage.getItem('saloon_jwt');
+    const res = await fetch(BACKEND_URL + '/api/moderation/users/' + encodeURIComponent(userId) + '/id-document', {
+      headers: { ...(jwt ? { Authorization: 'Bearer ' + jwt } : {}), 'x-step-up': token }
+    });
+    if (!res.ok) {
+      let msg = 'Could not load that document.';
+      if (res.status === 404) msg = 'No document on file — it may already have been reviewed.';
+      if (res.status === 401) { adminStepUp = null; msg = 'Your admin key confirmation expired.'; }
+      if (res.status === 503) msg = 'Identity verification is not configured on the server.';
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    if (idReviewBlobUrl) URL.revokeObjectURL(idReviewBlobUrl);
+    idReviewBlobUrl = URL.createObjectURL(blob);
+    document.getElementById('id-review-img').src = idReviewBlobUrl;
+    document.getElementById('id-review-status').textContent = '';
+  } catch (e) {
+    document.getElementById('id-review-status').textContent = e.message || 'Could not load that document.';
+  }
+}
+
+function closeIdReview() {
+  const modal = document.getElementById('id-review-modal');
+  if (modal) modal.classList.remove('open');
+  if (idReviewBlobUrl) { URL.revokeObjectURL(idReviewBlobUrl); idReviewBlobUrl = null; }
+  const img = document.getElementById('id-review-img');
+  if (img) img.removeAttribute('src');
 }
 
 function adminApplyUpdate(updated) {
@@ -2345,7 +2633,12 @@ function adminApplyUpdate(updated) {
   // Keep the public cache's verified flag in step, without ever copying the
   // email or ID filename into it.
   const cached = DB.users.find(u => u.id === updated.id);
-  if (cached) { cached.verified = updated.verified; cached.idSubmitted = updated.idSubmitted; DB.save(); }
+  if (cached) {
+    cached.verified    = updated.verified;
+    cached.idSubmitted = updated.idSubmitted;
+    cached.idRejected  = updated.idRejected;
+    DB.save();
+  }
   renderAdmin();
 }
 
@@ -2480,7 +2773,10 @@ function renderAnnotatedContent(content, annotations) {
     if (!ann.selectedText || used.has(ann.selectedText)) return;
     const escapedSel = esc(ann.selectedText);
     if (result.includes(escapedSel)) {
-      result = result.replace(escapedSel, `<span class="annotated" title="Has annotation">${escapedSel}</span>`);
+      // A replacer function, not a string: in a replacement STRING, "$&", "$`",
+      // "$'" and "$$" are substitution directives, and this value is chosen by
+      // whoever made the annotation.
+      result = result.replace(escapedSel, () => `<span class="annotated" title="Has annotation">${escapedSel}</span>`);
       used.add(ann.selectedText);
     }
   });
@@ -2647,6 +2943,7 @@ function collectSources() {
 }
 
 function submitPost(convId) {
+  if (!requireIdVerification()) return;
   const auth = getAuthUser();
   if (!auth) { navigate('login'); return; }
   const content = document.getElementById('post-compose').value.trim();
@@ -2778,40 +3075,76 @@ function saveDraft(convId) {
   toast('Draft saved.');
 }
 
-function publishDraft(postId) {
+async function publishDraft(postId) {
   const post = DB.posts.find(p => p.id === postId);
   if (!post) return;
   const content = document.getElementById('draft-edit-' + postId)?.value.trim() || post.content;
+  const prevContent = post.content, prevDraft = post.draft;
+  const conv = DB.conversations.find(c => c.id === post.conversationId);
+  const prevActivity = conv ? conv.lastActivity : null;
+
   post.content = content;
   post.draft = false;
-  const conv = DB.conversations.find(c => c.id === post.conversationId);
   if (conv) conv.lastActivity = Date.now();
   DB.save();
-  bw('PUT', '/api/posts/' + postId, { content, draft: false });
+
+  try {
+    await apiCall('PUT', '/api/posts/' + postId, { content, draft: false });
+  } catch (e) {
+    post.content = prevContent; post.draft = prevDraft;
+    if (conv) conv.lastActivity = prevActivity;
+    DB.save();
+    toast(e.message || 'Could not publish that post.');
+    renderProfile(getAuthUser().id);
+    return;
+  }
   toast('Published.');
   renderProfile(getAuthUser().id);
 }
 
-function publishConvDraft(convId) {
+async function publishConvDraft(convId) {
   const conv = DB.conversations.find(c => c.id === convId);
   if (!conv) return;
   const titleEl = document.getElementById('sandbox-title');
   const bodyEl = document.getElementById('sandbox-body');
-  if (titleEl) conv.title = titleEl.value.trim() || conv.title;
   const openingPost = DB.posts.find(p => p.conversationId === convId && !p.parentId);
   const draftPosts = DB.posts.filter(p => p.conversationId === convId && p.draft);
-  if (openingPost && bodyEl) { openingPost.content = bodyEl.value.trim() || openingPost.content; }
-  draftPosts.forEach(p => { p.draft = false; bw('PUT', '/api/posts/' + p.id, { content: p.content, draft: false }); });
+
+  // Publishing is the moment a draft becomes public and shareable. Telling
+  // someone it happened when it did not is the worst version of this bug.
+  const prev = {
+    title: conv.title, draft: conv.draft, activity: conv.lastActivity,
+    opening: openingPost ? openingPost.content : null,
+    flags: draftPosts.map(p => p.draft)
+  };
+
+  if (titleEl) conv.title = titleEl.value.trim() || conv.title;
+  if (openingPost && bodyEl) openingPost.content = bodyEl.value.trim() || openingPost.content;
+  draftPosts.forEach(p => { p.draft = false; });
   conv.draft = false;
   conv.lastActivity = Date.now();
   DB.save();
-  bw('PUT', '/api/conversations/' + convId, { title: conv.title, draft: false });
-  if (openingPost) bw('PUT', '/api/posts/' + openingPost.id, { content: openingPost.content, draft: false });
+
+  try {
+    await apiCall('PUT', '/api/conversations/' + convId, { title: conv.title, draft: false });
+    if (openingPost)
+      await apiCall('PUT', '/api/posts/' + openingPost.id, { content: openingPost.content, draft: false });
+    for (const p of draftPosts)
+      await apiCall('PUT', '/api/posts/' + p.id, { content: p.content, draft: false });
+  } catch (e) {
+    conv.title = prev.title; conv.draft = prev.draft; conv.lastActivity = prev.activity;
+    if (openingPost) openingPost.content = prev.opening;
+    draftPosts.forEach((p, i) => { p.draft = prev.flags[i]; });
+    DB.save();
+    toast(e.message || 'Could not publish this conversation.');
+    renderDraftSandbox(convId);
+    return;
+  }
   toast('Conversation published.');
   navigate('conversation', convId);
 }
 
-function requestJoin(convId) {
+async function requestJoin(convId) {
   const auth = getAuthUser();
   if (!auth) { navigate('login'); return; }
   const conv = DB.conversations.find(c => c.id === convId);
@@ -2820,30 +3153,50 @@ function requestJoin(convId) {
   if (conv.joinRequests.some(r => r.userId === auth.id)) return;
   const msgEl = document.getElementById('join-request-msg');
   const message = msgEl ? msgEl.value.trim() : '';
+  const prev = conv.joinRequests.slice();
+
   conv.joinRequests.push({ userId: auth.id, requestedAt: Date.now(), message });
   DB.save();
-  bw('PUT', '/api/conversations/' + convId, { joinRequests: conv.joinRequests });
+  try {
+    await apiCall('PUT', '/api/conversations/' + convId, { joinRequests: conv.joinRequests });
+  } catch (e) {
+    conv.joinRequests = prev;
+    DB.save();
+    toast(e.message || 'Could not send your request.');
+    renderConversation(convId);
+    return;
+  }
   toast('Request sent.');
   renderConversation(convId);
 }
 
-function acceptJoinRequest(convId, userId) {
+async function acceptJoinRequest(convId, userId) {
   const conv = DB.conversations.find(c => c.id === convId);
   if (!conv) return;
-  conv.joinRequests = (conv.joinRequests || []).filter(r => r.userId !== userId);
-  if (!(conv.participants || []).includes(userId)) conv.participants.push(userId);
-  DB.save();
-  bw('PUT', '/api/conversations/' + convId, { joinRequests: conv.joinRequests, participants: conv.participants });
+  let updated;
+  try {
+    updated = await apiCall('POST', '/api/conversations/' + convId + '/join-requests/' + userId + '/accept');
+  } catch (e) {
+    toast(e.message || 'Could not accept that request.');
+    return;
+  }
+  // Take the server's version of the lists rather than reconstructing them.
+  if (updated) { conv.joinRequests = updated.joinRequests || []; conv.participants = updated.participants || []; DB.save(); }
   toast('Request accepted.');
   renderConversation(convId);
 }
 
-function declineJoinRequest(convId, userId) {
+async function declineJoinRequest(convId, userId) {
   const conv = DB.conversations.find(c => c.id === convId);
   if (!conv) return;
-  conv.joinRequests = (conv.joinRequests || []).filter(r => r.userId !== userId);
-  DB.save();
-  bw('PUT', '/api/conversations/' + convId, { joinRequests: conv.joinRequests });
+  let updated;
+  try {
+    updated = await apiCall('POST', '/api/conversations/' + convId + '/join-requests/' + userId + '/decline');
+  } catch (e) {
+    toast(e.message || 'Could not decline that request.');
+    return;
+  }
+  if (updated) { conv.joinRequests = updated.joinRequests || []; DB.save(); }
   toast('Request declined.');
   renderConversation(convId);
 }
@@ -3141,6 +3494,7 @@ function handleCategoryChange() {
 }
 
 function openNewConvModal() {
+  if (!requireIdVerification()) return;
   if (!currentUser) { navigate('login'); return; }
   document.getElementById('new-conv-title').value = '';
   document.getElementById('new-conv-category').value = '';
@@ -3237,6 +3591,14 @@ function renderProfile(userId) {
           </div>
         ` : ''}
         ${isOwn ? `<button class="btn-ghost btn-sm" style="margin-top:24px" onclick="startEditProfile('${userId}')">Edit profile</button>` : ''}
+        ${isOwn ? `
+          <div style="margin-top:40px;padding-top:20px;border-top:1px solid var(--border)">
+            <div style="font-family:var(--font-ui);font-size:13px;color:var(--muted);max-width:46ch;line-height:1.6">
+              Deleting your account removes your profile, conversations, posts, comments,
+              profile photo, and any identity document still on file. It cannot be undone.
+            </div>
+            <button class="btn-ghost btn-sm" style="margin-top:12px;color:#c0392b" onclick="deleteMyAccount()">Delete my account</button>
+          </div>` : ''}
       `;
     }
   } else if (profileTab === 'posts') {
@@ -3816,7 +4178,7 @@ function seedData() {
   const pw = hashPassword('password');
   const alice = {
     id: 'u1', firstName: 'Alice', lastName: 'Monroe', email: 'alice@saloon.io',
-    passwordHash: pw, idFile: 'demo', idFileName: 'id.png', verified: true,
+    passwordHash: pw, idSubmitted: false, verified: true,
     createdAt: Date.now() - 86400000 * 5,
     bio: 'Literary critic and independent scholar. Interested in the phenomenology of reading and the social life of texts.',
     credentials: ['MA Comparative Literature, Yale', 'Contributing editor, The Point'],
@@ -3834,7 +4196,7 @@ function seedData() {
   };
   const bob = {
     id: 'u2', firstName: 'Bob', lastName: 'Harlan', email: 'bob@saloon.io',
-    passwordHash: pw, idFile: 'demo', idFileName: 'id.png', verified: true,
+    passwordHash: pw, idSubmitted: false, verified: true,
     createdAt: Date.now() - 86400000 * 4,
     bio: 'Historian of ideas with a focus on media and communication technology. Skeptic of golden-age narratives.',
     credentials: ['PhD History, Columbia', 'Author of "The Pamphlet and the Press"'],
@@ -3852,7 +4214,7 @@ function seedData() {
   };
   const cara = {
     id: 'u3', firstName: 'Cara', lastName: 'Voss', email: 'cara@saloon.io',
-    passwordHash: pw, idFile: 'demo', idFileName: 'id.png', verified: true,
+    passwordHash: pw, idSubmitted: false, verified: true,
     createdAt: Date.now() - 86400000 * 3,
     bio: 'Practicing attorney and legal theorist. I write on the intersection of natural law, constitutional theory, and political philosophy.',
     credentials: ['JD, Harvard Law', 'LLM Jurisprudence, Oxford', 'Clerk, First Circuit Court of Appeals'],
